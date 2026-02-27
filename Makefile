@@ -1,14 +1,14 @@
 build:
-\tdocker compose -f infra/docker-compose.yml up --build -d
+	docker compose -f infra/docker-compose.yml up --build -d
 
 down:
-\tdocker compose -f infra/docker-compose.yml down
+	docker compose -f infra/docker-compose.yml down
 
 shell:
-\tdocker exec -it tuskersquad-langgraph bash
+	docker exec -it tuskersquad-langgraph bash
 
 ollama-test:
-\tdocker exec -it tuskersquad-langgraph python scripts/check_ollama.py
+	docker exec -it tuskersquad-langgraph python scripts/check_ollama.py
 
 logs:
-\tdocker logs -f tuskersquad-langgraph
+	docker logs -f tuskersquad-langgraph
