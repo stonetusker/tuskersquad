@@ -5,6 +5,7 @@ from typing import Dict
 
 from core.model_router import ModelRouter
 from core.logging import get_logger
+import uuid
 
 
 class LLMClient:
@@ -31,15 +32,21 @@ class LLMClient:
         self.current_loaded_model = None
 
     async def _switch_model_if_needed(self, model_name: str):
-        """
-        Ensures only one heavy model active.
-        Ollama auto-unloads when switching models.
-        """
-        if self.current_loaded_model != model_name:
-            self.logger.info(
-                f"Switching model from {self.current_loaded_model} to {model_name}"
+
+        if self.current_loaded_model == model_name:
+            return
+
+        if self.current_loaded_model:
+
+            await self._unload_model(
+                self.current_loaded_model
             )
-            self.current_loaded_model = model_name
+
+        self.logger.info(
+            f"Switching model from {self.current_loaded_model} to {model_name}"
+        )
+
+        self.current_loaded_model = model_name
 
     async def generate(
         self,
@@ -50,7 +57,15 @@ class LLMClient:
 
         async with self.semaphore:
 
+            # ⭐ Create Trace ID
+            trace_id = str(uuid.uuid4())
+
+            self.logger.info(
+                f"TRACE={trace_id} agent={agent_name} starting inference"
+            )
+
             config: Dict = self.router.get_model_config(agent_name)
+
             model_name = config["model"]
             temperature = config["temperature"]
 
@@ -69,18 +84,54 @@ class LLMClient:
             retries = 2
 
             for attempt in range(retries + 1):
+
                 try:
-                    async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+
+                    async with httpx.AsyncClient(
+                        timeout=self.timeout_seconds
+                    ) as client:
+
                         response = await client.post(
                             f"{self.ollama_host}/api/generate",
                             json=payload
                         )
+
                         response.raise_for_status()
+
                         result = response.json()
+
+                        self.logger.info(
+                            f"TRACE={trace_id} completed successfully"
+                        )
+
                         return result.get("response", "")
 
                 except Exception as e:
-                    self.logger.error(f"LLM call failed attempt {attempt+1}: {str(e)}")
+
+                    self.logger.error(
+                        f"TRACE={trace_id} failed attempt {attempt+1} error={str(e)}"
+                    )
+
                     if attempt == retries:
                         raise e
+
                     await asyncio.sleep(2)
+                
+    async def _unload_model(self, model_name: str):
+        """
+        Explicitly request Ollama to unload a model.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                await client.post(
+                    f"{self.ollama_host}/api/generate",
+                    json={
+                        "model": model_name,
+                        "keep_alive": 0
+                    }
+                )
+
+            self.logger.info(f"Requested unload of {model_name}")
+
+        except Exception as e:
+            self.logger.warning(f"Unload failed: {str(e)}")
