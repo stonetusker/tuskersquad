@@ -1,0 +1,35 @@
+planner:
+ model: qwen2.5:14b
+ temperature: 0
+
+judge:
+ model: qwen2.5:14b
+ temperature: 0
+
+qa_lead:
+ model: qwen2.5:14b
+ temperature: 0
+
+security_engineer:
+ model: qwen2.5:14b
+ temperature: 0
+
+challenger:
+ model: qwen2.5:14b
+ temperature: 0
+
+backend_engineer:
+ model: deepseek-coder:6.7b
+ temperature: 0.2
+
+frontend_engineer:
+ model: deepseek-coder:6.7b
+ temperature: 0.2
+
+sre_engineer:
+ model: qwen2.5:14b
+ temperature: 0
+
+standup_summary:
+ model: phi3:mini
+ temperature: 0
