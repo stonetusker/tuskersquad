@@ -5,3 +5,7 @@ pyyaml
 psutil
 pytest
 pytest-asyncio
+sqlalchemy
+passlib[bcrypt]
+python-jose
+pydantic[email]
