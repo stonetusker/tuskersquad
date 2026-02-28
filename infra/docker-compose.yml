@@ -12,6 +12,7 @@ services:
 
   environment:
    - OLLAMA_HOST=http://host.docker.internal:11434
+   - BUG_PRICE=true
 
   volumes:
    - ..:/app
