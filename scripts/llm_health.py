@@ -1,13 +1,29 @@
 import httpx
 import os
 
-host=os.getenv(
+
+OLLAMA = os.getenv(
     "OLLAMA_HOST",
     "http://host.docker.internal:11434"
 )
 
-r=httpx.get(f"{host}/api/tags")
 
-print("LLM HEALTH OK")
+def run():
 
-print(r.json())
+    print("Checking Ollama connectivity...")
+
+    r = httpx.get(
+        f"{OLLAMA}/api/tags",
+        timeout=30
+    )
+
+    r.raise_for_status()
+
+    print("LLM HEALTH OK")
+
+    print(r.json())
+
+
+if __name__ == "__main__":
+
+    run()

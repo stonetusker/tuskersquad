@@ -17,19 +17,22 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
 
             "message": record.getMessage(),
+
         }
 
         return json.dumps(log_record)
 
 
-def get_logger(name):
+def get_logger(name: str):
 
     logger = logging.getLogger(name)
+
     logger.setLevel(logging.INFO)
 
     if not logger.handlers:
 
         handler = logging.StreamHandler(sys.stdout)
+
         handler.setFormatter(JsonFormatter())
 
         logger.addHandler(handler)
