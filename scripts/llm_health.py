@@ -1,29 +1,21 @@
-import httpx
-import os
+import sys
+from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-OLLAMA = os.getenv(
-    "OLLAMA_HOST",
-    "http://host.docker.internal:11434"
-)
+import asyncio
+from core.llm_client import LLMClient
 
+async def main():
+    llm = LLMClient()
 
-def run():
-
-    print("Checking Ollama connectivity...")
-
-    r = httpx.get(
-        f"{OLLAMA}/api/tags",
-        timeout=30
+    response = await llm.generate(
+        "planner",
+        "Explain what a pull request is in one sentence.",
+        temperature=0
     )
 
-    r.raise_for_status()
+    print("\nLLM Response:\n")
+    print(response)
 
-    print("LLM HEALTH OK")
-
-    print(r.json())
-
-
-if __name__ == "__main__":
-
-    run()
+asyncio.run(main())

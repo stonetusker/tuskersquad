@@ -1,35 +1,23 @@
 planner:
- model: qwen2.5:14b
- temperature: 0
-
-judge:
- model: qwen2.5:14b
- temperature: 0
-
-qa_lead:
- model: qwen2.5:14b
- temperature: 0
-
-security_engineer:
- model: qwen2.5:14b
- temperature: 0
-
-challenger:
- model: qwen2.5:14b
- temperature: 0
+  model: qwen2.5:14b
+  type: reasoning
 
 backend_engineer:
- model: deepseek-coder:6.7b
- temperature: 0.2
+  model: deepseek-coder:6.7b
+  type: coding
 
 frontend_engineer:
- model: deepseek-coder:6.7b
- temperature: 0.2
+  model: deepseek-coder:6.7b
+  type: coding
 
-sre_engineer:
- model: qwen2.5:14b
- temperature: 0
+security_engineer:
+  model: qwen2.5:14b
+  type: reasoning
 
-standup_summary:
- model: phi3:mini
- temperature: 0
+challenger:
+  model: qwen2.5:14b
+  type: reasoning
+
+judge:
+  model: qwen2.5:14b
+  type: reasoning

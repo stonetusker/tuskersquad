@@ -1,11 +1,26 @@
 from fastapi import FastAPI
+import uuid
 
-from services.langgraph_api.health import router
+app = FastAPI()
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
-app = FastAPI(
+@app.post("/workflow/start")
+def start_workflow(payload: dict):
 
-    title="TuskerSquad LangGraph API"
-)
+    workflow_id = str(uuid.uuid4())
 
-app.include_router(router)
+    return {
+        "workflow_id": workflow_id,
+        "status": "started"
+    }
+
+@app.post("/workflow/{workflow_id}/resume")
+def resume_workflow(workflow_id: str):
+
+    return {
+        "workflow_id": workflow_id,
+        "status": "resumed"
+    }

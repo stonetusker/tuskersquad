@@ -9,3 +9,13 @@ sqlalchemy
 passlib[bcrypt]
 python-jose
 pydantic[email]
+pydantic
+asyncio
+uvicorn
+pyyaml
+asyncpg
+psycopg2-binary
+sqlalchemy
+streamlit
+pytest
+playwright
