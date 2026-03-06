@@ -17,6 +17,7 @@ services:
     networks:
       - tuskersquad-network
 
+
   gitea:
     image: gitea/gitea:1.21
     container_name: tuskersquad-gitea
@@ -29,6 +30,7 @@ services:
     networks:
       - tuskersquad-network
 
+
   langgraph-api:
     build:
       context: ..
@@ -36,12 +38,18 @@ services:
     container_name: tuskersquad-langgraph
     environment:
       OLLAMA_URL: http://host.docker.internal:11434
+      POSTGRES_USER: tusker
+      POSTGRES_PASSWORD: tusker
+      POSTGRES_DB: tuskersquad
+      POSTGRES_HOST: tuskersquad-postgres
+      POSTGRES_PORT: 5432
     ports:
       - "8000:8000"
     depends_on:
       - postgres
     networks:
       - tuskersquad-network
+
 
   integration-service:
     build:
@@ -51,23 +59,41 @@ services:
     command: uvicorn services.integration_service.main:app --host 0.0.0.0 --port 8000
     environment:
       OLLAMA_URL: http://host.docker.internal:11434
+      POSTGRES_USER: tusker
+      POSTGRES_PASSWORD: tusker
+      POSTGRES_DB: tuskersquad
+      POSTGRES_HOST: tuskersquad-postgres
+      POSTGRES_PORT: 5432
     ports:
       - "8001:8000"
+    depends_on:
+      - postgres
     networks:
       - tuskersquad-network
+
 
   dashboard:
     build:
       context: ..
       dockerfile: infra/Dockerfile.langgraph
     container_name: tuskersquad-dashboard
+    environment:
+      POSTGRES_USER: tusker
+      POSTGRES_PASSWORD: tusker
+      POSTGRES_DB: tuskersquad
+      POSTGRES_HOST: tuskersquad-postgres
+      POSTGRES_PORT: 5432
     ports:
       - "8501:8501"
+    depends_on:
+      - postgres
     networks:
       - tuskersquad-network
 
+
 networks:
   tuskersquad-network:
+
 
 volumes:
   postgres_data:
