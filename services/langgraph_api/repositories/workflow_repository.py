@@ -161,3 +161,30 @@ class WorkflowRepository:
 
         finally:
             session.close()
+    def store_finding_challenge(
+        self,
+        workflow_id: str,
+        finding_id: int,
+        challenger_agent: str,
+        challenge_reason: str,
+        adjusted_confidence: float,
+        recommendation_override: str | None = None
+    ):
+
+        session = SessionLocal()
+
+        try:
+            challenge = FindingChallenge(
+                workflow_id=workflow_id,
+                finding_id=finding_id,
+                challenger_agent=challenger_agent,
+                challenge_reason=challenge_reason,
+                adjusted_confidence=adjusted_confidence,
+                recommendation_override=recommendation_override
+            )
+
+            session.add(challenge)
+            session.commit()
+
+        finally:
+            session.close()

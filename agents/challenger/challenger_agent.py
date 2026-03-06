@@ -8,8 +8,8 @@ repo = WorkflowRepository()
 
 async def challenger_node(state: WorkflowState) -> WorkflowState:
     """
-    Challenger agent reviews engineering findings and attempts
-    to challenge conclusions before the Judge decides.
+    Challenger agent reviews engineering findings and produces
+    counter-arguments before the Judge makes the final decision.
     """
 
     state["current_agent"] = "challenger"
@@ -17,31 +17,30 @@ async def challenger_node(state: WorkflowState) -> WorkflowState:
     start_time = datetime.utcnow()
 
     findings = state["findings"]
-
     challenges = []
 
-    for finding in findings:
+    for idx, finding in enumerate(findings):
 
         # Example deterministic debate logic
         if finding["test_name"] == "checkout_latency":
 
             challenge = {
-                "finding_id": 1,
+                "finding_id": idx + 1,
                 "challenger_agent": "challenger",
                 "challenge_reason": "Benchmark environment variance detected",
                 "adjusted_confidence": 0.62,
-                "recommendation_override": "REVIEW",
+                "recommendation_override": "REVIEW"
             }
 
             challenges.append(challenge)
 
             repo.store_finding_challenge(
                 workflow_id=state["workflow_id"],
-                finding_id=1,
+                finding_id=idx + 1,
                 challenger_agent="challenger",
                 challenge_reason=challenge["challenge_reason"],
                 adjusted_confidence=challenge["adjusted_confidence"],
-                recommendation_override=challenge["recommendation_override"],
+                recommendation_override=challenge["recommendation_override"]
             )
 
     state["challenges"] = challenges
@@ -50,7 +49,7 @@ async def challenger_node(state: WorkflowState) -> WorkflowState:
         {
             "timestamp": datetime.utcnow().isoformat(),
             "agent": "challenger",
-            "message": f"Challenges generated: {len(challenges)}",
+            "message": f"{len(challenges)} challenges generated",
         }
     )
 

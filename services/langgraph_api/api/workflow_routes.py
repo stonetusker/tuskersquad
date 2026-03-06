@@ -3,7 +3,12 @@ import traceback
 from datetime import datetime
 from typing import List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from services.langgraph_api.db.database import get_db
+from services.langgraph_api.db.models import WorkflowRun
+
 from pydantic import BaseModel
 
 from services.langgraph_api.state.workflow_state import WorkflowStatus
@@ -198,17 +203,22 @@ async def resume_workflow(workflow_id: str):
 # ---------------------------------------------------------
 
 @router.get("/api/workflows")
-def db_list_workflows():
-    """
-    Returns workflow runs from Postgres.
-    """
-    db = SessionLocal()
-    try:
-        runs = db.query(WorkflowRun).order_by(WorkflowRun.started_at.desc()).all()
-        return {"workflows": [r.__dict__ for r in runs]}
-    finally:
-        db.close()
+def db_list_workflows(db: Session = Depends(get_db)):
 
+    runs = db.query(WorkflowRun).order_by(
+        WorkflowRun.created_at.desc()
+    ).all()
+
+    return {
+        "workflows": [
+            {
+                "workflow_id": r.workflow_id,
+                "repo": r.repo,
+                "status": r.status
+            }
+            for r in runs
+        ]
+    }
 
 @router.get("/api/workflows/{workflow_id}")
 def db_get_workflow(workflow_id: str):

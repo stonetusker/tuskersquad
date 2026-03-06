@@ -1,23 +1,43 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
+import os
 
-from services.langgraph_api.db.models import Base
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://tusker:tusker@postgres:5432/tuskersquad"
+)
 
-DATABASE_URL = "postgresql://tusker:tusker@tuskersquad-postgres:5432/tuskersquad"
-
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True
+)
 
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
-    bind=engine,
+    bind=engine
 )
+
+Base = declarative_base()
+
+
+def get_db():
+    """
+    FastAPI dependency to provide DB session.
+    """
+    db = SessionLocal()
+
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 def init_db():
     """
-    Initialize database schema for TuskerSquad.
-
-    This will create tables automatically for all SQLAlchemy models
-    defined in models.py if they do not already exist.
+    Initialize database tables.
+    Called during application startup.
     """
-    Base.metadata.create_all(bind=engine, checkfirst=True)
+    from services.langgraph_api.db import models
+
+    Base.metadata.create_all(bind=engine)

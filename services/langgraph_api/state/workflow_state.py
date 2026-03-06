@@ -1,18 +1,8 @@
-"""
-TuskerSquad Workflow State Model
-
-Defines the LangGraph workflow state used during PR validation.
-This object is passed between all LangGraph nodes.
-"""
-
 from typing import TypedDict, List, Optional
 from enum import Enum
 
 
 class WorkflowStatus(str, Enum):
-    """
-    Workflow execution states.
-    """
 
     RUNNING = "RUNNING"
     WAITING_HUMAN_APPROVAL = "WAITING_HUMAN_APPROVAL"
@@ -21,9 +11,6 @@ class WorkflowStatus(str, Enum):
 
 
 class EngineeringFinding(TypedDict):
-    """
-    Structured evidence produced by engineering agents.
-    """
 
     agent: str
     severity: str
@@ -34,10 +21,16 @@ class EngineeringFinding(TypedDict):
     recommendation: str
 
 
+class FindingChallenge(TypedDict):
+
+    finding_id: int
+    challenger_agent: str
+    challenge_reason: str
+    adjusted_confidence: float
+    recommendation_override: Optional[str]
+
+
 class WorkflowLog(TypedDict):
-    """
-    Lightweight execution log used by the dashboard.
-    """
 
     timestamp: str
     agent: str
@@ -45,9 +38,6 @@ class WorkflowLog(TypedDict):
 
 
 class WorkflowState(TypedDict):
-    """
-    Global LangGraph state passed between workflow nodes.
-    """
 
     workflow_id: str
     repo: str
@@ -57,4 +47,6 @@ class WorkflowState(TypedDict):
     current_agent: Optional[str]
 
     findings: List[EngineeringFinding]
+    challenges: List[FindingChallenge]
+
     logs: List[WorkflowLog]
