@@ -96,6 +96,14 @@ async def start_workflow(request: WorkflowStartRequest):
     )
 
 
+@router.get("/workflows")
+async def list_workflows():
+
+    workflows = await workflow_registry.list_workflows()
+
+    return {"workflows": workflows}
+
+
 # ---------------------------------------------------------
 # Get Workflow State
 # ---------------------------------------------------------
