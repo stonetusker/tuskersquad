@@ -1,4 +1,5 @@
 from langgraph.graph import StateGraph, END
+from agents.challenger.challenger_agent import challenger_node
 
 
 def build_workflow():
@@ -31,5 +32,6 @@ def build_workflow():
     graph.add_edge("challenger", "judge")
 
     graph.add_edge("judge", END)
+    graph.add_node("challenger", challenger_node)
 
     return graph.compile()

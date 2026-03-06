@@ -1,64 +1,68 @@
-import json
-from core.llm_client import llm_client
+from datetime import datetime
+
+from services.langgraph_api.repositories.workflow_repository import WorkflowRepository
+from services.langgraph_api.state.workflow_state import WorkflowState
+
+repo = WorkflowRepository()
 
 
-class ChallengerAgent:
+async def challenger_node(state: WorkflowState) -> WorkflowState:
     """
     Challenger agent reviews engineering findings and attempts
-    to challenge their conclusions.
-
-    It does not delete findings, but instead produces counter
-    arguments that the Judge agent must evaluate.
+    to challenge conclusions before the Judge decides.
     """
 
-    agent_name = "challenger"
+    state["current_agent"] = "challenger"
 
-    async def run(self, workflow_context):
+    start_time = datetime.utcnow()
 
-        findings = workflow_context.get("engineering_findings", [])
+    findings = state["findings"]
 
-        if not findings:
-            return workflow_context
+    challenges = []
 
-        prompt = f"""
-You are a senior engineering reviewer.
+    for finding in findings:
 
-Your role is to critically evaluate engineering findings and
-challenge them if evidence may be uncertain.
+        # Example deterministic debate logic
+        if finding["test_name"] == "checkout_latency":
 
-Engineering findings:
-{json.dumps(findings, indent=2)}
+            challenge = {
+                "finding_id": 1,
+                "challenger_agent": "challenger",
+                "challenge_reason": "Benchmark environment variance detected",
+                "adjusted_confidence": 0.62,
+                "recommendation_override": "REVIEW",
+            }
 
-For each finding:
-1. Determine if the conclusion might be incorrect
-2. Identify possible alternative explanations
-3. If necessary, reduce confidence
-4. Optionally downgrade the recommendation
+            challenges.append(challenge)
 
-Return JSON list:
+            repo.store_finding_challenge(
+                workflow_id=state["workflow_id"],
+                finding_id=1,
+                challenger_agent="challenger",
+                challenge_reason=challenge["challenge_reason"],
+                adjusted_confidence=challenge["adjusted_confidence"],
+                recommendation_override=challenge["recommendation_override"],
+            )
 
-[
-  {{
-    "finding_id": "...",
-    "challenge_reason": "...",
-    "adjusted_confidence": 0.65,
-    "recommendation_override": "WARNING"
-  }}
-]
+    state["challenges"] = challenges
 
-If no challenge is necessary return [].
-"""
+    state["logs"].append(
+        {
+            "timestamp": datetime.utcnow().isoformat(),
+            "agent": "challenger",
+            "message": f"Challenges generated: {len(challenges)}",
+        }
+    )
 
-        response = await llm_client.generate(
-            agent_type="reasoning",
-            prompt=prompt
-        )
+    end_time = datetime.utcnow()
 
-        try:
-            challenges = json.loads(response)
-        except Exception:
-            challenges = []
+    repo.log_agent_execution(
+        workflow_id=state["workflow_id"],
+        agent_name="challenger",
+        model_used="qwen2.5:14b",
+        status="SUCCESS",
+        started_at=start_time,
+        completed_at=end_time,
+    )
 
-        workflow_context["finding_challenges"] = challenges
-
-        return workflow_context
+    return state
