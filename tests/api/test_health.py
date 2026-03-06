@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from services.langgraph_api.main import app
+from main import app
 
 def test_health_endpoint():
 

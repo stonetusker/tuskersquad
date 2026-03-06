@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from services.langgraph_api.repositories.workflow_repository import WorkflowRepository
-from services.langgraph_api.state.workflow_state import WorkflowState
+from repositories.workflow_repository import WorkflowRepository
+from state.workflow_state import WorkflowState
 
 repo = WorkflowRepository()
 

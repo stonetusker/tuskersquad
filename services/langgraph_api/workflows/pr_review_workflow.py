@@ -1,260 +1,123 @@
-from datetime import datetime
+from ..db.database import SessionLocal
 
-from langgraph.graph import END, StateGraph
+from ..repositories.workflow_repository import WorkflowRepository
+from ..repositories.findings_repository import FindingsRepository
+from ..repositories.governance_repository import GovernanceRepository
+from ..repositories.agent_log_repository import AgentLogRepository
+from ..repositories.finding_challenges_repository import FindingChallengesRepository
 
-from agents.planner.planner_agent import run_planner
-
-from services.langgraph_api.core.workflow_registry import workflow_registry
-from services.langgraph_api.repositories.workflow_repository import WorkflowRepository
-from services.langgraph_api.state.workflow_state import WorkflowState, WorkflowStatus
-
-
-repo = WorkflowRepository()
-
-
-async def persist_state(state: WorkflowState):
-    await workflow_registry.update_workflow(
-        state["workflow_id"],
-        state,
-    )
-    return state
+from .graph_builder import build_graph
+import asyncio
+from ..core.workflow_registry import workflow_registry
 
 
-def persist_finding(state: WorkflowState, finding: dict):
+def execute_workflow(workflow_id):
+    """Execute the deterministic Week-6 workflow and persist results.
 
-    repo.store_engineering_finding(
-        workflow_id=state["workflow_id"],
-        agent_name=finding["agent"],
-        finding_type=finding["test_name"],
-        description=finding["finding"],
-        confidence=finding["confidence"],
-        recommendation=finding["recommendation"],
-    )
+    The graph builder returns in-memory results; repositories are used
+    here to persist findings, challenges, governance actions and
+    agent execution logs. Any exception marks the workflow as FAILED.
+    """
 
+    db = SessionLocal()
 
-def add_finding(
-    state: WorkflowState,
-    agent: str,
-    severity: str,
-    confidence: float,
-    test_name: str,
-    finding: str,
-    endpoint: str,
-    recommendation: str,
-):
+    workflow_repo = WorkflowRepository(db)
+    findings_repo = FindingsRepository(db)
+    governance_repo = GovernanceRepository(db)
+    agent_log_repo = AgentLogRepository(db)
+    challenge_repo = FindingChallengesRepository(db)
 
-    new_finding = {
-        "agent": agent,
-        "severity": severity,
-        "confidence": confidence,
-        "test_name": test_name,
-        "finding": finding,
-        "affected_endpoint": endpoint,
-        "recommendation": recommendation,
-    }
+    try:
 
-    state["findings"].append(new_finding)
+        graph = build_graph()
 
-    persist_finding(state, new_finding)
-
-
-# --------------------------------------------------
-# Planner Node
-# --------------------------------------------------
-
-async def planner_node(state: WorkflowState) -> WorkflowState:
-
-    state["current_agent"] = "planner"
-
-    start_time = datetime.utcnow()
-
-    plan = await run_planner(
-        repo=state["repo"],
-        pr_number=state["pr_number"],
-    )
-
-    end_time = datetime.utcnow()
-
-    repo.log_agent_execution(
-        workflow_id=state["workflow_id"],
-        agent_name="planner",
-        model_used="qwen2.5:14b",
-        status="SUCCESS",
-        started_at=start_time,
-        completed_at=end_time,
-    )
-
-    agents = plan.get("agents")
-
-    if not agents or not isinstance(agents, list):
-        agents = ["security", "backend"]
-
-    state["execution_plan"] = agents
-
-    state["logs"].append(
-        {
-            "timestamp": datetime.utcnow().isoformat(),
-            "agent": "planner",
-            "message": f"Execution plan created: {agents}",
+        state = {
+            "workflow_id": workflow_id,
         }
-    )
 
-    return await persist_state(state)
+        result = graph.invoke(state)
 
+        # persist agent execution logs
+        for log in result.get("agent_logs", []):
+            # create an entry (start + complete)
+            l = agent_log_repo.start_agent(workflow_id=workflow_id, agent=log.get("agent"))
+            agent_log_repo.complete_agent(l)
 
-# --------------------------------------------------
-# Security
-# --------------------------------------------------
-
-async def security_node(state: WorkflowState) -> WorkflowState:
-
-    state["current_agent"] = "security"
-
-    add_finding(
-        state,
-        "security",
-        "MEDIUM",
-        0.74,
-        "dependency_scan",
-        "Outdated dependency detected",
-        "/auth/login",
-        "REVIEW",
-    )
-
-    return await persist_state(state)
-
-
-# --------------------------------------------------
-# Backend
-# --------------------------------------------------
-
-async def backend_node(state: WorkflowState) -> WorkflowState:
-
-    state["current_agent"] = "backend"
-
-    add_finding(
-        state,
-        "backend",
-        "HIGH",
-        0.82,
-        "checkout_latency",
-        "Checkout latency increased by 35%",
-        "/api/checkout",
-        "BLOCK",
-    )
-
-    return await persist_state(state)
-
-
-# --------------------------------------------------
-# Frontend
-# --------------------------------------------------
-
-async def frontend_node(state: WorkflowState) -> WorkflowState:
-
-    state["current_agent"] = "frontend"
-
-    return await persist_state(state)
-
-
-# --------------------------------------------------
-# SRE
-# --------------------------------------------------
-
-async def sre_node(state: WorkflowState) -> WorkflowState:
-
-    state["current_agent"] = "sre"
-
-    return await persist_state(state)
-
-
-# --------------------------------------------------
-# Week-6 Challenger
-# --------------------------------------------------
-
-async def challenger_node(state: WorkflowState) -> WorkflowState:
-
-    state["current_agent"] = "challenger"
-
-    for finding in state["findings"]:
-
-        if finding["test_name"] == "checkout_latency":
-
-            finding["confidence"] = 0.62
-
-            state["logs"].append(
-                {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "agent": "challenger",
-                    "message": "Benchmark environment variance detected. Confidence reduced.",
-                }
+        # persist findings and build an ID map from in-memory finding ids
+        # (integers used by the SimpleGraph) to the persisted UUIDs.
+        id_map = {}
+        for finding in result.get("findings", []):
+            saved = findings_repo.create_finding(
+                workflow_id=workflow_id,
+                agent=finding["agent"],
+                severity=finding.get("severity", "MEDIUM"),
+                title=finding.get("title", ""),
+                description=finding.get("description", "")
             )
 
-    return await persist_state(state)
+            # map the graph's local id -> persisted UUID
+            try:
+                local_id = finding.get("id")
+                id_map[local_id] = saved.id
+            except Exception:
+                pass
 
+        # persist challenges, resolving local finding ids to persisted UUIDs
+        for ch in result.get("challenges", []):
+            local_fid = ch.get("finding_id")
+            persisted_fid = id_map.get(local_fid)
 
-# --------------------------------------------------
-# Judge
-# --------------------------------------------------
+            # only store challenge if we can resolve the finding UUID
+            if persisted_fid is None:
+                continue
 
-async def judge_node(state: WorkflowState) -> WorkflowState:
+            challenge_repo.create_challenge(
+                workflow_id=workflow_id,
+                finding_id=persisted_fid,
+                challenger_agent=ch.get("challenger_agent"),
+                challenge_reason=ch.get("challenge_reason"),
+                decision=ch.get("decision")
+            )
 
-    state["current_agent"] = "judge"
-
-    decision = "ALLOW"
-
-    for finding in state["findings"]:
-
-        if finding["severity"] == "HIGH" and finding["recommendation"] == "BLOCK":
-            decision = "BLOCK"
-
-    repo.store_governance_action(
-        workflow_id=state["workflow_id"],
-        decision=decision,
-        judge_confidence=0.85,
-    )
-
-    if decision == "BLOCK":
-
-        state["status"] = WorkflowStatus.WAITING_HUMAN_APPROVAL
-
-        repo.update_workflow_status(
-            workflow_id=state["workflow_id"],
-            status="WAITING_HUMAN_APPROVAL",
+        # persist governance decision
+        governance_repo.create_decision(
+            workflow_id,
+            result.get("decision", "UNKNOWN")
         )
 
-    return await persist_state(state)
+        # update workflow status to waiting for human approval
+        workflow_repo.update_workflow_status(
+            workflow_id,
+            "WAITING_HUMAN_APPROVAL"
+        )
 
+        # update in-memory registry so API reflects latest status
+        try:
+            state = {
+                "workflow_id": str(workflow_id),
+                "status": "WAITING_HUMAN_APPROVAL",
+            }
 
-# --------------------------------------------------
-# Workflow Graph
-# --------------------------------------------------
+            # safe to run asyncio.run here because execute_workflow runs in
+            # a background thread separate from the FastAPI event loop.
+            asyncio.run(workflow_registry.update_workflow(str(workflow_id), state))
+        except Exception:
+            # do not fail the workflow if registry update isn't possible
+            pass
 
-def build_workflow():
+    except Exception as exc:
 
-    graph = StateGraph(WorkflowState)
+        workflow_repo.update_workflow_status(
+            workflow_id,
+            "FAILED"
+        )
 
-    graph.add_node("planner", planner_node)
-    graph.add_node("security", security_node)
-    graph.add_node("backend", backend_node)
-    graph.add_node("frontend", frontend_node)
-    graph.add_node("sre", sre_node)
+        try:
+            asyncio.run(workflow_registry.update_workflow(str(workflow_id), {"workflow_id": str(workflow_id), "status": "FAILED"}))
+        except Exception:
+            pass
 
-    graph.add_node("challenger", challenger_node)
-    graph.add_node("judge", judge_node)
+        raise exc
 
-    graph.set_entry_point("planner")
-
-    graph.add_edge("planner", "security")
-    graph.add_edge("security", "backend")
-    graph.add_edge("backend", "frontend")
-    graph.add_edge("frontend", "sre")
-
-    # Week-6 debate stage
-    graph.add_edge("sre", "challenger")
-
-    graph.add_edge("challenger", "judge")
-
-    graph.add_edge("judge", END)
-
-    return graph.compile()
+    finally:
+        db.close()

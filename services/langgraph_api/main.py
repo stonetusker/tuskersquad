@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
-from services.langgraph_api.db.database import init_db
-from services.langgraph_api.api.workflow_routes import router as workflow_router
+from .db.database import init_db
+from .api.workflow_routes import router as workflow_router
 
 app = FastAPI(title="TuskerSquad LangGraph API")
 

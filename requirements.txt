@@ -22,3 +22,4 @@ asyncpg
 langgraph
 langchain-core
 alembic
+psycopg2-binary
