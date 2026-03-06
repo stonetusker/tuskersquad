@@ -21,3 +21,4 @@ playwright
 asyncpg
 langgraph
 langchain-core
+alembic
