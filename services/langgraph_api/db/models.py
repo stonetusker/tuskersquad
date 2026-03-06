@@ -1,65 +1,67 @@
 from sqlalchemy import (
     Column,
-    String,
     Integer,
+    String,
+    Text,
     Float,
-    Boolean,
     DateTime,
     ForeignKey,
-    Index,
-    Text
+    Index
 )
 
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.orm import declarative_base
 from datetime import datetime
-import uuid
+
+
+# -------------------------------------------------------------------
+# SQLAlchemy Base
+# -------------------------------------------------------------------
 
 Base = declarative_base()
 
 
-def generate_uuid():
-    return str(uuid.uuid4())
-
+# -------------------------------------------------------------------
+# Workflow Runs
+# -------------------------------------------------------------------
 
 class WorkflowRun(Base):
+
     __tablename__ = "workflow_runs"
 
-    workflow_id = Column(String, primary_key=True, default=generate_uuid)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
-    repository = Column(String, nullable=False)
-    pr_number = Column(Integer, nullable=False)
-
-    status = Column(String, nullable=False)
-
-    started_at = Column(DateTime, default=datetime.utcnow)
-    completed_at = Column(DateTime, nullable=True)
-
-    agent_logs = relationship(
-        "AgentExecutionLog",
-        back_populates="workflow",
-        cascade="all, delete-orphan"
+    workflow_id = Column(
+        String,
+        unique=True,
+        nullable=False,
+        index=True
     )
 
-    findings = relationship(
-        "EngineeringFinding",
-        back_populates="workflow",
-        cascade="all, delete-orphan"
+    pr_number = Column(Integer)
+
+    repository = Column(String)
+
+    status = Column(String)
+
+    current_agent = Column(String)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
     )
 
-    governance_action = relationship(
-        "GovernanceAction",
-        back_populates="workflow",
-        uselist=False,
-        cascade="all, delete-orphan"
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow
     )
 
-    __table_args__ = (
-        Index("idx_workflow_repo_pr", "repository", "pr_number"),
-        Index("idx_workflow_status", "status"),
-    )
 
+# -------------------------------------------------------------------
+# Agent Execution Log
+# -------------------------------------------------------------------
 
 class AgentExecutionLog(Base):
+
     __tablename__ = "agent_execution_log"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -70,27 +72,25 @@ class AgentExecutionLog(Base):
         nullable=False
     )
 
-    agent_name = Column(String, nullable=False)
+    agent_name = Column(String)
 
-    model_used = Column(String, nullable=False)
+    status = Column(String)
 
-    started_at = Column(DateTime, default=datetime.utcnow)
-    completed_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime)
 
-    status = Column(String, nullable=False)
+    completed_at = Column(DateTime)
 
-    workflow = relationship(
-        "WorkflowRun",
-        back_populates="agent_logs"
-    )
+    duration_ms = Column(Integer)
 
-    __table_args__ = (
-        Index("idx_agent_workflow", "workflow_id"),
-        Index("idx_agent_name", "agent_name"),
-    )
+    model_used = Column(String)
 
+
+# -------------------------------------------------------------------
+# Engineering Findings
+# -------------------------------------------------------------------
 
 class EngineeringFinding(Base):
+
     __tablename__ = "engineering_findings"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -101,31 +101,30 @@ class EngineeringFinding(Base):
         nullable=False
     )
 
-    agent_name = Column(String, nullable=False)
+    agent_name = Column(String)
 
-    finding_type = Column(String, nullable=False)
+    category = Column(String)
 
-    description = Column(Text, nullable=False)
+    title = Column(Text)
 
-    confidence = Column(Float, nullable=False)
+    confidence = Column(Float)
 
-    recommendation = Column(String, nullable=False)
+    recommendation = Column(String)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    evidence = Column(Text)
 
-    workflow = relationship(
-        "WorkflowRun",
-        back_populates="findings"
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
     )
 
-    __table_args__ = (
-        Index("idx_finding_workflow", "workflow_id"),
-        Index("idx_finding_recommendation", "recommendation"),
-        Index("idx_finding_type", "finding_type"),
-    )
 
+# -------------------------------------------------------------------
+# Governance Actions
+# -------------------------------------------------------------------
 
 class GovernanceAction(Base):
+
     __tablename__ = "governance_actions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -133,25 +132,79 @@ class GovernanceAction(Base):
     workflow_id = Column(
         String,
         ForeignKey("workflow_runs.workflow_id"),
-        nullable=False,
-        unique=True
+        nullable=False
     )
 
-    decision = Column(String, nullable=False)
+    decision = Column(String)
 
-    judge_confidence = Column(Float, nullable=False)
+    confidence = Column(Float)
 
-    human_override = Column(Boolean, default=False)
+    reasoning = Column(Text)
 
-    approved_by = Column(String, nullable=True)
+    human_override = Column(String)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
 
-    workflow = relationship(
-        "WorkflowRun",
-        back_populates="governance_action"
+
+# -------------------------------------------------------------------
+# Week 6 — Finding Challenges (AI Engineering Debate)
+# -------------------------------------------------------------------
+
+class FindingChallenge(Base):
+    """
+    Challenger agent arguments against engineering findings.
+
+    This table stores counter-analysis produced by the
+    challenger agent before the judge makes the final
+    governance decision.
+    """
+
+    __tablename__ = "finding_challenges"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    workflow_id = Column(
+        String,
+        ForeignKey("workflow_runs.workflow_id"),
+        nullable=False
+    )
+
+    finding_id = Column(
+        Integer,
+        ForeignKey("engineering_findings.id"),
+        nullable=False
+    )
+
+    challenger_agent = Column(
+        String,
+        nullable=False,
+        default="challenger"
+    )
+
+    challenge_reason = Column(
+        Text,
+        nullable=False
+    )
+
+    adjusted_confidence = Column(
+        Float,
+        nullable=True
+    )
+
+    recommendation_override = Column(
+        String,
+        nullable=True
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
     )
 
     __table_args__ = (
-        Index("idx_governance_decision", "decision"),
+        Index("idx_challenge_workflow", "workflow_id"),
+        Index("idx_challenge_finding", "finding_id"),
     )
