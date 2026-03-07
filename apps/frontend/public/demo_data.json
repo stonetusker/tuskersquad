@@ -1,0 +1,28 @@
+{
+  "workflows": [
+    {
+      "workflow_id": "demo-1",
+      "repository": "example/hello",
+      "pr_number": 42,
+      "status": "WAITING_HUMAN_APPROVAL",
+      "created_at": "2026-03-07T10:00:00Z"
+    }
+  ],
+  "agents": {
+    "demo-1": [
+      {"agent":"planner","status":"COMPLETED","started_at":"2026-03-07T10:00:01Z","output":"Planned tasks"},
+      {"agent":"backend","status":"COMPLETED","started_at":"2026-03-07T10:00:05Z","output":"Ran unit tests"},
+      {"agent":"security","status":"COMPLETED","started_at":"2026-03-07T10:00:10Z","output":"Found high-risk dependency"},
+      {"agent":"judge","status":"BLOCKED","started_at":"2026-03-07T10:00:15Z","output":"Requires human approval"}
+    ]
+  },
+  "findings": {
+    "demo-1": [
+      {"id":"f1","agent":"security","title":"Outdated dependency","severity":"HIGH","description":"libxyz v1.2.3 has known RCE vulnerability"},
+      {"id":"f2","agent":"backend","title":"Missing test coverage","severity":"MEDIUM","description":"Critical code path lacks unit tests"}
+    ]
+  },
+  "governance": {
+    "demo-1": {"decision":"REVIEW_REQUIRED","approved":null}
+  }
+}

@@ -7,3 +7,4 @@ langgraph
 langchain-core
 psycopg2-binary
 httpx
+respx

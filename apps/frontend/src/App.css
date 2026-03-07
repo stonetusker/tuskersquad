@@ -40,3 +40,90 @@
 .read-the-docs {
   color: #888;
 }
+
+/* Dashboard layout and widgets */
+.app-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+.app-root { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; height: 100vh; display:flex; flex-direction:column }
+.app-header { display:flex; align-items:center; justify-content:space-between; padding:12px 20px; background: #0b1220; color:#fff }
+.brand { font-weight:700; font-size:18px }
+.tag { opacity:0.8; font-size:13px }
+.app-main { flex:1; padding:16px; background: #f6f8fb }
+
+.dashboard-root { display:flex; gap:12px; height:100% }
+.dashboard-left { width:360px; display:flex; flex-direction:column; gap:12px }
+.dashboard-right { flex:1; min-width:0 }
+
+.panel { background:#fff; border-radius:8px; padding:12px; box-shadow:0 1px 4px rgba(16,24,40,0.06) }
+.control .form-row { display:flex; flex-direction:column; margin-bottom:8px }
+.control label { font-size:12px; color:#333; margin-bottom:4px }
+.control input { padding:8px; border:1px solid #e6e9ef; border-radius:6px }
+.control .actions { display:flex; justify-content:flex-end }
+.control button { padding:8px 12px; border-radius:6px; background:#0b5fff; color:#fff; border:none }
+.status { margin-top:8px; font-size:12px; color:#666 }
+
+.workflows { overflow:auto }
+.workflow-list { list-style:none; margin:0; padding:0 }
+.workflow-list li { padding:8px; border-bottom:1px solid #f1f3f6; cursor:pointer }
+.workflow-list li.selected { background:#eef5ff }
+.wf-title { font-weight:600 }
+.wf-meta { font-size:12px; color:#666 }
+
+.panel.detail { display:flex; flex-direction:column; gap:12px }
+.wf-header { display:flex; justify-content:space-between; align-items:center }
+.wf-grid { display:flex; gap:12px }
+.wf-col { flex:1; min-width:0 }
+.findings-list, .agents-list { list-style:none; margin:0; padding:0 }
+.finding { padding:8px; border-bottom:1px solid #f1f3f6 }
+.finding .title { font-weight:600 }
+.finding .meta { font-size:12px; color:#666 }
+.agent { padding:8px; border-bottom:1px solid #f1f3f6 }
+.agent-name { font-weight:600 }
+.agent-meta { font-size:12px; color:#666 }
+.wf-actions { display:flex; gap:8px; justify-content:flex-end }
+.wf-actions button { padding:8px 12px; border-radius:6px; border:none; cursor:pointer }
+.wf-actions button:first-child { background:#0b5fff; color:#fff }
+.wf-actions button:last-child { background:#eee }
+
+.muted { color:#9aa0ad; font-size:13px }
+.empty { padding:24px; color:#667085 }
+
+.workflow-list { display:block }
+.workflow-item { padding: 0.5rem; margin: 0.35rem 0; border-radius: 6px; cursor: pointer; }
+.workflow-item:hover { background: rgba(255,255,255,0.02) }
+.workflow-item .repo { font-weight:600 }
+.workflow-item .pr { color: #9fb0c8; margin-left:0.5rem }
+.workflow-item .time { color:#9fb0c8; font-size:0.85rem }
+.empty { color:#84a0c0; padding: 1rem; text-align:center }
+.selected { background: linear-gradient(90deg,#0b2338,#0b1f2e); }
+
+.main { padding: 1rem }
+.placeholder { color:#65788b; padding: 2rem; background:#f6fbff; border-radius:8px }
+
+.workflow-detail .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem }
+.workflow-detail .title { font-size:1.1rem; font-weight:700 }
+.workflow-detail .actions { display:flex; gap:0.5rem; align-items:center }
+.badge { padding: 0.25rem 0.5rem; border-radius: 5px; font-weight:700 }
+.badge.completed { background: #0ea5a1; color: #052522 }
+.badge.failed { background: #ef4444; color: #fff }
+.badge.waiting { background: #f59e0b; color: #1a1208 }
+
+.btn { padding: 0.45rem 0.75rem; border-radius:6px; border:none; cursor:pointer }
+.btn.primary { background:#2563eb; color:white }
+
+.panel { background: #fff; border-radius:8px; padding:1rem; margin-bottom:1rem; box-shadow: 0 1px 2px rgba(16,24,40,0.04) }
+
+.timeline { list-style:none; padding:0; margin:0 }
+.timeline li { padding:0.5rem 0; border-bottom:1px dashed #eef4fb }
+.timeline .agent { font-weight:700 }
+
+.findings .finding { border-left: 3px solid #e6eef8; padding:0.5rem 0.75rem; margin:0.5rem 0; border-radius:4px }
+.finding .f-meta { color:#4b5563; font-size:0.9rem }
+.finding .f-title { font-weight:700 }
+.finding .f-desc { color:#374151 }
+
+.governance pre { background:#0b1220; color:#cfe9ff; padding:0.75rem; border-radius:6px }

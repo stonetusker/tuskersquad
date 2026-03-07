@@ -12,10 +12,10 @@ COPY . /app
 # lives under services/langgraph_api/requirements.txt)
 RUN pip install --no-cache-dir -r services/langgraph_api/requirements.txt
 
-# Ensure Python can import the langgraph service packages using simple
-# module names like `db` and `services` by adding the service folder to
-# `PYTHONPATH`.
-ENV PYTHONPATH=/app/services/langgraph_api:/app
+# Ensure Python can import the service packages by placing project root
+# on PYTHONPATH. Adding the specific service path can mask package
+# imports and break relative imports, so keep only the workspace root.
+ENV PYTHONPATH=/app
 
 # Default command serves the LangGraph API; other services override
 # the command in docker-compose (for example, integration-service).

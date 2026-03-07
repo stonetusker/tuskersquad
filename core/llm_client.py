@@ -1,10 +1,12 @@
+
 import asyncio
 import httpx
 import yaml
 import logging
+import os
 
-#OLLAMA_URL = "http://host.docker.internal:11434"
-OLLAMA_URL = "http://localhost:11434"
+# Allow runtime override via environment (Docker compose or host)
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 logger = logging.getLogger("llm")
 

@@ -56,7 +56,7 @@ services:
       context: ..
       dockerfile: infra/Dockerfile.langgraph
     container_name: tuskersquad-integration
-    command: uvicorn services.integration_service.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn services.integration_service.main:app --host 0.0.0.0 --port 8001
     environment:
       OLLAMA_URL: http://host.docker.internal:11434
       POSTGRES_USER: tusker
@@ -64,10 +64,14 @@ services:
       POSTGRES_DB: tuskersquad
       POSTGRES_HOST: tuskersquad-postgres
       POSTGRES_PORT: 5432
+      LANGGRAPH_URL: http://langgraph-api:8000
+      GITEA_URL: http://tuskersquad-gitea:3000
+      GITEA_TOKEN: "${GITEA_TOKEN:-}"
     ports:
-      - "8001:8000"
+      - "8001:8001"
     depends_on:
       - postgres
+      - langgraph-api
     networks:
       - tuskersquad-network
 
@@ -83,10 +87,39 @@ services:
       POSTGRES_DB: tuskersquad
       POSTGRES_HOST: tuskersquad-postgres
       POSTGRES_PORT: 5432
+      LANGGRAPH_URL: http://langgraph-api:8000
+      GITEA_URL: http://tuskersquad-gitea:3000
+      GITEA_TOKEN: "${GITEA_TOKEN:-}"
+    command: uvicorn services.dashboard.main:app --host 0.0.0.0 --port 8501
     ports:
       - "8501:8501"
     depends_on:
       - postgres
+      - langgraph-api
+    networks:
+      - tuskersquad-network
+
+
+  frontend:
+    image: node:20
+    container_name: tuskersquad-frontend
+    working_dir: /app/apps/frontend
+    volumes:
+      - ..:/app:cached
+      - frontend_node_modules:/app/apps/frontend/node_modules
+    environment:
+      # Use host-accessible addresses so the browser (on host) can reach the APIs
+      VITE_DASH_URL: http://localhost:8501
+      VITE_INTEGRATION_URL: http://localhost:8001
+      # Prevent Playwright from downloading browser binaries inside the container
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      # Force non-interactive installs
+      CI: '1'
+    command: sh -c "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - dashboard
     networks:
       - tuskersquad-network
 
@@ -98,3 +131,4 @@ networks:
 volumes:
   postgres_data:
   gitea_data:
+  frontend_node_modules:

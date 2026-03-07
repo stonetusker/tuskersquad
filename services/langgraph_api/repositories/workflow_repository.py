@@ -39,3 +39,15 @@ class WorkflowRepository:
         self.db.commit()
 
         return workflow
+
+
+    def get_workflow(self, workflow_id):
+        """Return the WorkflowRun row for the given workflow_id."""
+
+        workflow = (
+            self.db.query(WorkflowRun)
+            .filter(WorkflowRun.id == workflow_id)
+            .first()
+        )
+
+        return workflow

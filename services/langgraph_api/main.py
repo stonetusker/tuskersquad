@@ -1,9 +1,19 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .db.database import init_db
 from .api.workflow_routes import router as workflow_router
 
 app = FastAPI(title="TuskerSquad LangGraph API")
+
+# Allow services and frontend to query LangGraph during development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")

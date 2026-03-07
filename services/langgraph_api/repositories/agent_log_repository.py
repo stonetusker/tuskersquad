@@ -33,6 +33,14 @@ class AgentLogRepository:
         self.db.commit()
 
 
+    def fail_agent(self, log):
+
+        log.status = "FAILED"
+        log.completed_at = datetime.utcnow()
+
+        self.db.commit()
+
+
     def list_by_workflow(self, workflow_id):
         """Return AgentExecutionLog rows for a workflow."""
 

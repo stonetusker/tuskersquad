@@ -1,5 +1,9 @@
 from datetime import datetime
 from typing import Dict, Any, List
+import os
+import asyncio
+from core.llm_client import LLMClient
+import logging
 
 
 class SimpleGraph:
@@ -50,22 +54,65 @@ class SimpleGraph:
 
         for agent in eng_agents:
             start = datetime.utcnow()
-
-            # deterministic finding content
+            # deterministic test name (used by challenger)
             test_name = "generic_check"
             if agent == "backend":
                 test_name = "checkout_latency"
 
-            finding = {
-                "id": fid,
-                "workflow_id": workflow_id,
-                "agent": agent,
-                "severity": "MEDIUM",
-                "title": f"{agent} - potential issue",
-                "description": f"Automated {agent} review detected a potential issue.",
-                "test_name": test_name,
-                "created_at": start.isoformat(),
-            }
+            # If an LLM is configured, ask the agent-model for a finding summary.
+            finding = None
+            if os.getenv("OLLAMA_URL"):
+                try:
+                    llm = LLMClient()
+                    # map short agent names to model keys in config/models.yaml
+                    agent_model_map = {
+                        "backend": "backend_engineer",
+                        "frontend": "frontend_engineer",
+                        "security": "security_engineer",
+                        "sre": "planner",
+                        "planner": "planner",
+                        "challenger": "challenger",
+                        "judge": "judge",
+                    }
+                    model_agent = agent_model_map.get(agent, "judge")
+                    prompt = f"You are the {agent} agent. Review repository {repository} PR #{pr_number} and return a single line with Title | SEVERITY | Short description."
+                    # Bound LLM calls to a short timeout so the workflow
+                    # doesn't stall if Ollama is unreachable in the dev env.
+                    try:
+                        resp = asyncio.run(asyncio.wait_for(llm.generate(model_agent, prompt), timeout=5))
+                    except asyncio.TimeoutError:
+                        logging.warning("llm_agent_timeout", extra={"agent": agent})
+                        resp = None
+                    if resp:
+                        parts = [p.strip() for p in resp.split("|")]
+                        title = parts[0] if len(parts) > 0 and parts[0] else f"{agent} - potential issue"
+                        severity = parts[1] if len(parts) > 1 and parts[1] else "MEDIUM"
+                        desc = parts[2] if len(parts) > 2 and parts[2] else f"Automated {agent} review detected a potential issue."
+                        finding = {
+                            "id": fid,
+                            "workflow_id": workflow_id,
+                            "agent": agent,
+                            "severity": severity,
+                            "title": title,
+                            "description": desc,
+                            "test_name": test_name,
+                            "created_at": start.isoformat(),
+                        }
+                except Exception:
+                    logging.exception("llm_agent_failed")
+
+            # fallback to deterministic finding if LLM not used or failed
+            if finding is None:
+                finding = {
+                    "id": fid,
+                    "workflow_id": workflow_id,
+                    "agent": agent,
+                    "severity": "MEDIUM",
+                    "title": f"{agent} - potential issue",
+                    "description": f"Automated {agent} review detected a potential issue.",
+                    "test_name": test_name,
+                    "created_at": start.isoformat(),
+                }
 
             findings.append(finding)
 
@@ -99,12 +146,53 @@ class SimpleGraph:
             "completed_at": datetime.utcnow().isoformat(),
         })
 
-        # Judge makes a decision
+        # Judge makes a decision. Prefer an LLM judge if configured,
+        # otherwise fall back to simple rule-based decision.
         judge_start = datetime.utcnow()
         decision = "APPROVE"
         approved = True
-        if len(challenges) > 0:
-            decision = "REVIEW_REQUIRED"
+
+        try:
+            if os.getenv("OLLAMA_URL"):
+                try:
+                    llm = LLMClient()
+                    prompt = "Decide: APPROVE, REJECT, or REVIEW_REQUIRED for this PR based on findings:\n"
+                    for f in findings:
+                        prompt += f"- {f.get('agent')}: {f.get('title')} ({f.get('severity')})\\n"
+                    resp = asyncio.run(llm.generate('judge', prompt))
+                    if resp and 'APPROVE' in resp.upper():
+                        decision = 'APPROVE'
+                        approved = True
+                    elif resp and 'REJECT' in resp.upper():
+                        decision = 'REJECT'
+                        approved = False
+                    else:
+                        # fallback to existing rule
+                        if len(challenges) > 0:
+                            decision = 'REVIEW_REQUIRED'
+                            approved = False
+                        else:
+                            decision = 'APPROVE'
+                            approved = True
+                except Exception:
+                    logging.exception('llm_judge_failed')
+                    if len(challenges) > 0:
+                        decision = 'REVIEW_REQUIRED'
+                        approved = False
+                    else:
+                        decision = 'APPROVE'
+                        approved = True
+            else:
+                if len(challenges) > 0:
+                    decision = "REVIEW_REQUIRED"
+                    approved = False
+                else:
+                    decision = "APPROVE"
+                    approved = True
+        except Exception:
+            # very defensive: if something unexpected happens, require human
+            logging.exception('judge_decision_failed')
+            decision = 'REVIEW_REQUIRED'
             approved = False
 
         agent_logs.append({

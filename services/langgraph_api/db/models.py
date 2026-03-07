@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey
+from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -24,7 +24,7 @@ class WorkflowRun(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    updated_at = Column(DateTime)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class EngineeringFinding(Base):
@@ -56,7 +56,7 @@ class GovernanceAction(Base):
 
     decision = Column(String)
 
-    approved = Column(String)
+    approved = Column(Boolean, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

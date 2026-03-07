@@ -65,7 +65,8 @@ def test_week6_end_to_end():
     governance = []
     workflow_state = {}
 
-    deadline = time.time() + 20
+    # allow more time for background orchestration to finish in CI/host
+    deadline = time.time() + 60
     while time.time() < deadline:
         workflow_state = _http_get(f"/api/workflow/{wid}")
         agents = _http_get(f"/api/workflows/{wid}/agents")
