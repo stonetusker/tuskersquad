@@ -10,6 +10,21 @@ template-based summary when Ollama is not configured.
 """
 
 import os
+
+def _run_async(coro):
+    """Run coroutine safely from background thread or async context."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("closed")
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result(timeout=30)
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return _run_async(coro)
+
 import asyncio
 import logging
 from datetime import datetime
@@ -125,7 +140,7 @@ def run_qa_lead_agent(
     # Try LLM summary; fall back to template
     llm_summary = None
     try:
-        llm_summary = asyncio.run(_llm_summary(findings))
+        llm_summary = _run_async(_llm_summary(findings))
     except RuntimeError:
         pass
 

@@ -11,6 +11,21 @@ Decision values: APPROVE | REJECT | REVIEW_REQUIRED
 """
 
 import os
+
+def _run_async(coro):
+    """Run coroutine safely from background thread or async context."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("closed")
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result(timeout=30)
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return _run_async(coro)
+
 import asyncio
 import logging
 from datetime import datetime
@@ -133,7 +148,7 @@ def run_judge_agent(
 
     llm_response = None
     try:
-        llm_response = asyncio.run(
+        llm_response = _run_async(
             _llm_decision(findings, challenges, qa_summary)
         )
     except RuntimeError:

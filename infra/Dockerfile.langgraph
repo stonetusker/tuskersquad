@@ -1,22 +1,25 @@
-FROM python:3.11
+FROM python:3.11-slim
 
-# Use /app as the workspace so multiple services under /app/services
-# can be served by uvicorn commands issued by docker-compose.
+# Install system deps needed by psycopg2-binary and compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Copy entire project so `services.integration_service` and other
-# packages are available inside the container.
+# Install Python dependencies first (better layer caching)
+COPY services/langgraph_api/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Copy full project so all packages are importable
 COPY . /app
 
-# Install Python requirements for the LangGraph service (the file
-# lives under services/langgraph_api/requirements.txt)
-RUN pip install --no-cache-dir -r services/langgraph_api/requirements.txt
-
-# Ensure Python can import the service packages by placing project root
-# on PYTHONPATH. Adding the specific service path can mask package
-# imports and break relative imports, so keep only the workspace root.
+# PYTHONPATH=/app lets Python find:
+#   - services.langgraph_api.*   (the main service)
+#   - agents.*                   (all agent modules)
+#   - core.*                     (llm_client, model_router)
+#   - apps.*                     (demo app, for test probes)
 ENV PYTHONPATH=/app
 
-# Default command serves the LangGraph API; other services override
-# the command in docker-compose (for example, integration-service).
 CMD ["uvicorn", "services.langgraph_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -25,3 +25,8 @@ def startup_event():
 
 
 app.include_router(workflow_router, prefix="/api")
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "service": "langgraph-api"}

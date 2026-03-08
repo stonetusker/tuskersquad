@@ -56,6 +56,27 @@ logger = logging.getLogger("langgraph.graph_builder")
 # ---------------------------------------------------------------------------
 # Semaphore: limit concurrent heavy LLM calls (plan spec: max 5)
 # ---------------------------------------------------------------------------
+
+def _run_async(coro):
+    """
+    Run a coroutine safely from any context (thread or main).
+    Background threads (execute_workflow) have no running loop,
+    so asyncio.run() works fine there. This helper handles both cases.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("loop closed")
+        if loop.is_running():
+            # We're inside an async context — schedule and wait
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                f = pool.submit(asyncio.run, coro)
+                return f.result(timeout=30)
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
+
 import asyncio as _asyncio
 _LLM_SEMAPHORE = _asyncio.Semaphore(5)
 
@@ -111,7 +132,7 @@ def _llm_finding_or_synthetic(
             )
 
             try:
-                resp = asyncio.run(
+                resp = _run_async(
                     asyncio.wait_for(llm.generate(model_agent, prompt), timeout=5)
                 )
             except asyncio.TimeoutError:
@@ -400,7 +421,7 @@ def judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 prompt = "Decide: APPROVE, REJECT, or REVIEW_REQUIRED for this PR based on findings:\n"
                 for f in findings:
                     prompt += f"- {f.get('agent')}: {f.get('title')} ({f.get('severity')})\n"
-                resp = asyncio.run(llm.generate("judge", prompt))
+                resp = _run_async(llm.generate("judge", prompt))
                 rationale = resp or ""
                 if resp and "APPROVE" in resp.upper():
                     decision = "APPROVE"

@@ -3,8 +3,12 @@ fastapi>=0.111.0
 uvicorn>=0.30.0
 httpx>=0.27.0
 
-# Pydantic
+# Pydantic + email validation
 pydantic>=2.7.0
+email-validator>=2.1.0
+
+# Typing support
+typing-extensions>=4.9.0
 
 # Database
 sqlalchemy>=2.0.0
@@ -12,16 +16,14 @@ asyncpg>=0.29.0
 psycopg2-binary>=2.9.9
 alembic>=1.13.0
 
-# LangGraph orchestration (pinned for stability)
-# LangGraph >=0.2.0 introduced StateGraph, interrupt(), MemorySaver, Command
+# LangGraph orchestration
 langgraph>=0.2.0
 langchain-core>=0.2.0
 
-# LLM client
-httpx>=0.27.0
+# LLM + config
 pyyaml>=6.0.0
 
-# Auth / JWT (for demo app)
+# Auth / JWT (for demo app routes and agent probes)
 passlib[bcrypt]>=1.7.4
 python-jose>=3.3.0
 
@@ -30,9 +32,5 @@ pytest>=8.0.0
 pytest-asyncio>=0.23.0
 respx>=0.21.0
 
-# Playwright (for frontend agent)
-playwright>=1.44.0
-pytest-playwright>=0.5.0
-
-# Performance
+# Performance monitoring
 psutil>=5.9.0

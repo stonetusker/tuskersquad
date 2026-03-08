@@ -383,7 +383,7 @@ def get_findings(workflow_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/workflows/{workflow_id}/governance")
-def get_governance(workflow_id: str, db: Session = Depends(get_db)):
+async def get_governance(workflow_id: str, db: Session = Depends(get_db)):
     rows = GovernanceRepository(db).list_by_workflow(workflow_id)
     actions = [
         {
@@ -397,7 +397,7 @@ def get_governance(workflow_id: str, db: Session = Depends(get_db)):
 
     rationale = None
     try:
-        reg = asyncio.run(workflow_registry.get_workflow(workflow_id))
+        reg = await workflow_registry.get_workflow(workflow_id)
         if reg and isinstance(reg, dict):
             rationale = reg.get("rationale")
     except Exception:
@@ -422,7 +422,7 @@ def get_agents(workflow_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/workflows/{workflow_id}/qa")
-def get_qa_summary(workflow_id: str, db: Session = Depends(get_db)):
+async def get_qa_summary(workflow_id: str, db: Session = Depends(get_db)):
     """Return the QA Lead's standup summary and risk level."""
     row = QASummaryRepository(db).get_by_workflow(workflow_id)
     if row:
@@ -434,7 +434,7 @@ def get_qa_summary(workflow_id: str, db: Session = Depends(get_db)):
         }
 
     try:
-        reg = asyncio.run(workflow_registry.get_workflow(workflow_id))
+        reg = await workflow_registry.get_workflow(workflow_id)
         if reg and isinstance(reg, dict) and reg.get("qa_summary"):
             return {
                 "workflow_id": workflow_id,

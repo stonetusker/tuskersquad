@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
@@ -177,9 +177,10 @@ async def retest_workflow(workflow_id: str):
 
 
 @app.post("/api/ui/workflow/{workflow_id}/release")
-async def release_manager_override(workflow_id: str, payload: dict):
+async def release_manager_override(workflow_id: str, request: Request):
     """Proxy a Release Manager override decision."""
     try:
+        payload = await request.json()
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{LANGGRAPH_URL}/api/workflow/{workflow_id}/release",
