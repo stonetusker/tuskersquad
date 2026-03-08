@@ -22,7 +22,8 @@ class WorkflowRepository:
             repository=repository,
             pr_number=pr_number,
             status="RUNNING",
-            created_at=datetime.utcnow(),
+            merge_status="pending",
+            deploy_status="pending"
         )
         self.db.add(workflow)
         self.db.commit()

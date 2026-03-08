@@ -31,6 +31,11 @@ class WorkflowRun(Base):
     created_at    = Column(DateTime, default=datetime.utcnow)
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    merge_status = Column(String, nullable=True)
+    merge_sha = Column(String, nullable=True)
+    deploy_status = Column(String, nullable=True)
+    deploy_url = Column(String, nullable=True)
+
 
 class EngineeringFinding(Base):
     __tablename__ = "engineering_findings"
