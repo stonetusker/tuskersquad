@@ -1,3 +1,7 @@
+"""
+SQLAlchemy ORM models for TuskerSquad.
+Added: merge_status, merge_sha, deploy_status, deploy_url to WorkflowRun.
+"""
 import uuid
 from datetime import datetime
 
@@ -9,107 +13,77 @@ Base = declarative_base()
 
 
 class WorkflowRun(Base):
-
     __tablename__ = "workflow_runs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
-    repository = Column(String, nullable=False)
-
-    pr_number = Column(Integer, nullable=False)
-
-    status = Column(String, nullable=False)
-
+    id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    repository    = Column(String, nullable=False)
+    pr_number     = Column(Integer, nullable=False)
+    status        = Column(String, nullable=False)
     current_agent = Column(String)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # ── Auto-merge & deploy columns (added in this release) ──────────────────
+    merge_status  = Column(String, nullable=True)   # pending | success | failed | skipped
+    merge_sha     = Column(String, nullable=True)   # SHA after merge (if available)
+    deploy_status = Column(String, nullable=True)   # pending | triggered | failed | skipped
+    deploy_url    = Column(String, nullable=True)   # link to Actions run
+    # ─────────────────────────────────────────────────────────────────────────
 
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class EngineeringFinding(Base):
-
     __tablename__ = "engineering_findings"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"))
-
-    agent = Column(String)
-
-    severity = Column(String)
-
-    title = Column(String)
-
+    agent       = Column(String)
+    severity    = Column(String)
+    title       = Column(String)
     description = Column(Text)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at  = Column(DateTime, default=datetime.utcnow)
 
 
 class GovernanceAction(Base):
-
     __tablename__ = "governance_actions"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"))
-
-    decision = Column(String)
-
-    approved = Column(Boolean, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
+    decision    = Column(String)
+    approved    = Column(Boolean, nullable=True)
+    created_at  = Column(DateTime, default=datetime.utcnow)
 
 
 class AgentExecutionLog(Base):
-
     __tablename__ = "agent_execution_log"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
-    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"))
-
-    agent = Column(String)
-
-    status = Column(String)
-
-    started_at = Column(DateTime)
-
+    id           = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workflow_id  = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"))
+    agent        = Column(String)
+    status       = Column(String)
+    started_at   = Column(DateTime)
     completed_at = Column(DateTime)
-
-    output = Column(Text, nullable=True)
+    output       = Column(Text, nullable=True)
 
 
 class FindingChallenge(Base):
-
     __tablename__ = "finding_challenges"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
-    finding_id = Column(UUID(as_uuid=True), ForeignKey("engineering_findings.id"))
-
-    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"))
-
+    id               = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    finding_id       = Column(UUID(as_uuid=True), ForeignKey("engineering_findings.id"))
+    workflow_id      = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"))
     challenger_agent = Column(String)
-
     challenge_reason = Column(Text)
-
-    decision = Column(String)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
+    decision         = Column(String)
+    created_at       = Column(DateTime, default=datetime.utcnow)
 
 
 class QASummary(Base):
-    """Stores the QA Lead's standup summary and risk assessment per workflow."""
-
+    """QA Lead's standup summary and risk assessment per workflow."""
     __tablename__ = "qa_summaries"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"))
-
-    risk_level = Column(String)  # LOW / MEDIUM / HIGH
-
-    summary = Column(Text)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
+    risk_level  = Column(String)   # LOW | MEDIUM | HIGH
+    summary     = Column(Text)
+    created_at  = Column(DateTime, default=datetime.utcnow)

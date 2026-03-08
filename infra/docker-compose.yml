@@ -1,26 +1,47 @@
 version: "3.9"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# TuskerSquad — Stonetusker Systems
+# Agentic AI PR Governance Platform
+#
+# Services
+# ────────
+#  postgres            — persistent data store
+#  gitea               — self-hosted Git + Gitea Actions
+#  demo-backend        — injectable-bug e-commerce app (test target)
+#  langgraph-api       — 8-agent orchestration core
+#  integration-service — webhook receiver (Gitea / GitHub / simulate)
+#  dashboard           — BFF proxy for the React UI
+#  frontend            — React + Vite dashboard
+#
+# New env vars (auto-merge & deploy)
+# ───────────────────────────────────
+#  AUTO_MERGE_ON_APPROVE  true|false  — merge PR after human APPROVE
+#  MERGE_STYLE            merge|rebase|squash
+#  DEPLOY_ON_MERGE        true|false  — trigger Gitea Actions after merge
+#  DEPLOY_BRANCH          main        — branch to dispatch on
+#  DEPLOY_PIPELINE        deploy      — workflow file name (without .yml)
+# ═══════════════════════════════════════════════════════════════════════════════
+
 services:
 
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:15
     container_name: tuskersquad-postgres
     restart: always
     environment:
-      POSTGRES_USER: tusker
+      POSTGRES_USER:     tusker
       POSTGRES_PASSWORD: tusker
-      POSTGRES_DB: tuskersquad
+      POSTGRES_DB:       tuskersquad
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Init script: runs on first start, creates DB + user if missing
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     networks:
       - tuskersquad-network
     healthcheck:
-      # IMPORTANT: must specify -d tuskersquad. Without it pg_isready uses
-      # the username "tusker" as the DB name, which doesn't exist → FATAL.
       test: ["CMD-SHELL", "pg_isready -U tusker -d tuskersquad -q"]
       interval: 5s
       timeout: 5s
@@ -28,10 +49,14 @@ services:
       start_period: 10s
 
 
+  # ── Gitea (self-hosted Git + Actions) ──────────────────────────────────────
   gitea:
     image: gitea/gitea:1.21
     container_name: tuskersquad-gitea
     restart: always
+    environment:
+      # Enable Gitea Actions so deploy pipelines can run
+      GITEA__actions__ENABLED: "true"
     ports:
       - "3000:3000"
       - "2222:22"
@@ -41,16 +66,16 @@ services:
       - tuskersquad-network
 
 
-  # Demo e-commerce app — minimal build, only its own deps
+  # ── Demo e-commerce app (test target) ──────────────────────────────────────
   demo-backend:
     build:
       context: ..
       dockerfile: infra/Dockerfile.demo
     container_name: tuskersquad-demo-backend
     environment:
-      BUG_PRICE: "${BUG_PRICE:-false}"
+      BUG_PRICE:    "${BUG_PRICE:-false}"
       BUG_SECURITY: "${BUG_SECURITY:-false}"
-      BUG_SLOW: "${BUG_SLOW:-false}"
+      BUG_SLOW:     "${BUG_SLOW:-false}"
     ports:
       - "8080:8080"
     networks:
@@ -63,24 +88,37 @@ services:
       start_period: 20s
 
 
+  # ── LangGraph API (orchestration core) ─────────────────────────────────────
   langgraph-api:
     build:
       context: ..
       dockerfile: infra/Dockerfile.langgraph
     container_name: tuskersquad-langgraph
     environment:
+      # LLM
       OLLAMA_URL: "http://host.docker.internal:11434"
-      POSTGRES_USER: tusker
+      # Postgres
+      POSTGRES_USER:     tusker
       POSTGRES_PASSWORD: tusker
-      POSTGRES_DB: tuskersquad
-      POSTGRES_HOST: tuskersquad-postgres
-      POSTGRES_PORT: "5432"
-      DEMO_APP_URL: "http://tuskersquad-demo-backend:8080"
+      POSTGRES_DB:       tuskersquad
+      POSTGRES_HOST:     tuskersquad-postgres
+      POSTGRES_PORT:     "5432"
+      # Demo app
+      DEMO_APP_URL:      "http://tuskersquad-demo-backend:8080"
       DEMO_FRONTEND_URL: "http://tuskersquad-frontend:5173"
-      GITEA_URL: "http://tuskersquad-gitea:3000"
+      # Gitea
+      GITEA_URL:   "http://tuskersquad-gitea:3000"
       GITEA_TOKEN: "${GITEA_TOKEN:-}"
+      # ── Auto-Merge & Deploy ─────────────────────────────────────────────
+      AUTO_MERGE_ON_APPROVE: "${AUTO_MERGE_ON_APPROVE:-false}"
+      MERGE_STYLE:           "${MERGE_STYLE:-merge}"
+      DEPLOY_ON_MERGE:       "${DEPLOY_ON_MERGE:-false}"
+      DEPLOY_BRANCH:         "${DEPLOY_BRANCH:-main}"
+      DEPLOY_PIPELINE:       "${DEPLOY_PIPELINE:-deploy}"
+      # ───────────────────────────────────────────────────────────────────
+      # SRE thresholds
       LATENCY_THRESHOLD_MS: "500"
-      SRE_REQUEST_COUNT: "10"
+      SRE_REQUEST_COUNT:    "10"
     ports:
       - "8000:8000"
     depends_on:
@@ -98,6 +136,7 @@ services:
       start_period: 30s
 
 
+  # ── Integration Service (webhook receiver) ──────────────────────────────────
   integration-service:
     build:
       context: ..
@@ -106,11 +145,11 @@ services:
     command: uvicorn services.integration_service.main:app --host 0.0.0.0 --port 8001
     environment:
       LANGGRAPH_URL: "http://tuskersquad-langgraph:8000"
-      GITEA_URL: "http://tuskersquad-gitea:3000"
-      GITEA_TOKEN: "${GITEA_TOKEN:-}"
-      JIRA_URL: "${JIRA_URL:-}"
-      JIRA_TOKEN: "${JIRA_TOKEN:-}"
-      JIRA_PROJECT: "${JIRA_PROJECT:-TUSKER}"
+      GITEA_URL:     "http://tuskersquad-gitea:3000"
+      GITEA_TOKEN:   "${GITEA_TOKEN:-}"
+      JIRA_URL:      "${JIRA_URL:-}"
+      JIRA_TOKEN:    "${JIRA_TOKEN:-}"
+      JIRA_PROJECT:  "${JIRA_PROJECT:-TUSKER}"
       SLACK_WEBHOOK_URL: "${SLACK_WEBHOOK_URL:-}"
     ports:
       - "8001:8001"
@@ -121,6 +160,7 @@ services:
       - tuskersquad-network
 
 
+  # ── Dashboard (BFF proxy) ───────────────────────────────────────────────────
   dashboard:
     build:
       context: ..
@@ -129,8 +169,8 @@ services:
     command: uvicorn services.dashboard.main:app --host 0.0.0.0 --port 8501
     environment:
       LANGGRAPH_URL: "http://tuskersquad-langgraph:8000"
-      GITEA_URL: "http://tuskersquad-gitea:3000"
-      GITEA_TOKEN: "${GITEA_TOKEN:-}"
+      GITEA_URL:     "http://tuskersquad-gitea:3000"
+      GITEA_TOKEN:   "${GITEA_TOKEN:-}"
     ports:
       - "8501:8501"
     depends_on:
@@ -140,13 +180,14 @@ services:
       - tuskersquad-network
 
 
+  # ── React Frontend ───────────────────────────────────────────────────────────
   frontend:
     build:
       context: ../apps/frontend
       dockerfile: Dockerfile
     container_name: tuskersquad-frontend
     environment:
-      VITE_DASH_URL: "http://localhost:8501"
+      VITE_DASH_URL:        "http://localhost:8501"
       VITE_INTEGRATION_URL: "http://localhost:8001"
     ports:
       - "5173:5173"

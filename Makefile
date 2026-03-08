@@ -1,73 +1,126 @@
-# TuskerSquad Makefile
-# =====================
-# Run from the project root (one level above infra/)
+# ═══════════════════════════════════════════════════════════════════════════
+# TuskerSquad — Stonetusker Systems  ·  Makefile
+# ═══════════════════════════════════════════════════════════════════════════
 
 COMPOSE = docker compose -f infra/docker-compose.yml
+ENV_FILE = infra/.env
 
-.PHONY: up down restart clean logs ps build demo-bugs-on demo-bugs-off fresh
+.PHONY: help up fresh clean stop logs health simulate approve reject \
+        demo-security demo-latency demo-pricing demo-all demo-clean
 
-## Start all services (build if needed)
+help:
+	@echo ""
+	@echo "  TuskerSquad — Stonetusker Systems"
+	@echo "  ────────────────────────────────────"
+	@echo "  make up             Start all services (build if needed)"
+	@echo "  make fresh          Clean volumes + full rebuild + start"
+	@echo "  make stop           Stop all services"
+	@echo "  make clean          Stop and remove all volumes"
+	@echo "  make logs           Tail langgraph-api logs"
+	@echo "  make logs-all       Tail all service logs"
+	@echo "  make health         Check all service health endpoints"
+	@echo ""
+	@echo "  make simulate       Trigger a demo workflow (no Gitea needed)"
+	@echo "  make demo-security  Enable BUG_SECURITY and trigger"
+	@echo "  make demo-latency   Enable BUG_SLOW and trigger"
+	@echo "  make demo-pricing   Enable BUG_PRICE and trigger"
+	@echo "  make demo-all       Enable all bugs and trigger"
+	@echo "  make demo-clean     Disable all bugs"
+	@echo ""
+	@echo "  Auto-merge: set AUTO_MERGE_ON_APPROVE=true in infra/.env"
+	@echo "  Deploy:     set DEPLOY_ON_MERGE=true in infra/.env"
+	@echo ""
+
+# ── Start / Stop ────────────────────────────────────────────────────────────
 up:
-	$(COMPOSE) up --build -d
+	@if [ -f $(ENV_FILE) ]; then \
+		$(COMPOSE) --env-file $(ENV_FILE) up --build; \
+	else \
+		$(COMPOSE) up --build; \
+	fi
 
-## Attach to logs
-logs:
-	$(COMPOSE) logs -f
+fresh:
+	@echo "🧹 Clean start (removing volumes)…"
+	$(COMPOSE) down -v --remove-orphans 2>/dev/null || true
+	@if [ -f $(ENV_FILE) ]; then \
+		$(COMPOSE) --env-file $(ENV_FILE) up --build; \
+	else \
+		$(COMPOSE) up --build; \
+	fi
 
-## Logs for a specific service: make logs-svc SVC=langgraph-api
-logs-svc:
-	$(COMPOSE) logs -f $(SVC)
+stop:
+	$(COMPOSE) stop
 
-## Show running containers
-ps:
-	$(COMPOSE) ps
-
-## Stop all services (keep volumes)
-down:
-	$(COMPOSE) down
-
-## Stop all services AND remove volumes (full reset — re-creates DB on next up)
 clean:
-	@echo "WARNING: This removes all data volumes including the database!"
 	$(COMPOSE) down -v --remove-orphans
 
-## Full clean rebuild: wipe volumes, rebuild images, start fresh
-fresh: clean
-	$(COMPOSE) up --build -d
-	@echo "Fresh start complete — services starting at:"
-	@echo "  Frontend:    http://localhost:5173"
-	@echo "  Dashboard:   http://localhost:8501"
-	@echo "  LangGraph:   http://localhost:8000"
-	@echo "  Integration: http://localhost:8001"
+# ── Logs ────────────────────────────────────────────────────────────────────
+logs:
+	$(COMPOSE) logs -f langgraph-api
 
-## Enable demo bugs
-demo-bugs-on:
-	BUG_PRICE=true BUG_SLOW=true BUG_SECURITY=true $(COMPOSE) up -d demo-backend
-
-## Disable demo bugs
-demo-bugs-off:
-	BUG_PRICE=false BUG_SLOW=false BUG_SECURITY=false $(COMPOSE) up -d demo-backend
-
-## Restart just the langgraph service
-restart-api:
-	$(COMPOSE) restart langgraph-api
-
-## Restart just the dashboard
-restart-dash:
-	$(COMPOSE) restart dashboard
-
-## Restart just the demo backend
-restart-demo:
-	$(COMPOSE) restart demo-backend
-
-## View logs for all backend services
 logs-all:
-	$(COMPOSE) logs -f langgraph-api dashboard integration-service demo-backend
+	$(COMPOSE) logs -f
 
-## Run unit tests (outside Docker)
-test-unit:
-	PYTHONPATH=. pytest tests/unit/ -v
+logs-api:
+	$(COMPOSE) logs -f langgraph-api
 
-## Run integration tests (outside Docker, services must be running)
-test-integration:
-	PYTHONPATH=. pytest tests/integration/ -v
+logs-dash:
+	$(COMPOSE) logs -f dashboard
+
+logs-frontend:
+	$(COMPOSE) logs -f frontend
+
+# ── Health ──────────────────────────────────────────────────────────────────
+health:
+	@echo "── LangGraph API ────────────────────"
+	@curl -sf http://localhost:8000/api/health && echo " ✅" || echo " ❌"
+	@echo "── Demo Backend ─────────────────────"
+	@curl -sf http://localhost:8080/health && echo " ✅" || echo " ❌"
+	@echo "── Integration Service ──────────────"
+	@curl -sf http://localhost:8001/health && echo " ✅" || echo " ❌"
+	@echo "── Dashboard ────────────────────────"
+	@curl -sf http://localhost:8501/api/ui/workflows > /dev/null && echo " ✅" || echo " ❌"
+
+# ── Demo triggers ────────────────────────────────────────────────────────────
+simulate:
+	@echo "🚀 Triggering demo workflow…"
+	@curl -sf -X POST http://localhost:8001/webhook/simulate \
+	     -H 'Content-Type: application/json' \
+	     -d '{"repo":"tuskeradmin/demo-store","pr_number":42}' | python3 -m json.tool
+
+demo-security:
+	@echo "🔐 Enabling BUG_SECURITY…"
+	@BUG_SECURITY=true $(COMPOSE) up -d demo-backend
+	@sleep 3
+	@$(MAKE) simulate
+
+demo-latency:
+	@echo "📡 Enabling BUG_SLOW…"
+	@BUG_SLOW=true $(COMPOSE) up -d demo-backend
+	@sleep 3
+	@$(MAKE) simulate
+
+demo-pricing:
+	@echo "💰 Enabling BUG_PRICE…"
+	@BUG_PRICE=true $(COMPOSE) up -d demo-backend
+	@sleep 3
+	@$(MAKE) simulate
+
+demo-all:
+	@echo "💥 Enabling all bugs…"
+	@BUG_PRICE=true BUG_SECURITY=true BUG_SLOW=true $(COMPOSE) up -d demo-backend
+	@sleep 3
+	@$(MAKE) simulate
+
+demo-clean:
+	@echo "🧹 Disabling all bugs…"
+	@$(COMPOSE) up -d demo-backend
+
+# ── Env setup ───────────────────────────────────────────────────────────────
+env:
+	@if [ ! -f $(ENV_FILE) ]; then \
+		cp infra/.env.example $(ENV_FILE); \
+		echo "Created $(ENV_FILE) — edit it and set AUTO_MERGE_ON_APPROVE=true to enable auto-merge"; \
+	else \
+		echo "$(ENV_FILE) already exists"; \
+	fi

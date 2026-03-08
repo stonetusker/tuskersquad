@@ -192,3 +192,19 @@ async def release_manager_override(workflow_id: str, request: Request):
     except Exception as exc:
         logger.exception("failed_release_override")
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/ui/workflow/{workflow_id}/merge-status")
+async def get_merge_status(workflow_id: str):
+    """Proxy the merge/deploy status for live UI polling."""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{LANGGRAPH_URL}/api/workflow/{workflow_id}/merge-status",
+                timeout=10.0,
+            )
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        logger.exception("failed_get_merge_status")
+        raise HTTPException(status_code=502, detail=str(exc))
