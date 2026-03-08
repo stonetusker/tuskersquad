@@ -1,4 +1,4 @@
-import React, {useState} from 'react'
+import React, { useState } from 'react'
 import ControlPanel from './ControlPanel'
 import WorkflowList from './WorkflowList'
 import WorkflowDetail from './WorkflowDetail'
@@ -9,11 +9,20 @@ export default function Dashboard() {
   return (
     <div className="dashboard-root">
       <div className="dashboard-left">
-        <ControlPanel onStarted={(wf) => setSelected(wf?.workflow_id)} />
-        <WorkflowList onSelect={(id) => setSelected(id)} selectedId={selected} />
+        <ControlPanel onStarted={(wf) => wf?.workflow_id && setSelected(wf.workflow_id)} />
+        <WorkflowList onSelect={setSelected} selectedId={selected} />
       </div>
       <div className="dashboard-right">
-        {selected ? <WorkflowDetail workflowId={selected} /> : <div className="empty">Select a workflow to view details</div>}
+        {selected
+          ? <WorkflowDetail workflowId={selected} />
+          : (
+            <div className="empty-state">
+              <div className="empty-state-icon">🔍</div>
+              <div className="empty-state-text">Select a review to inspect</div>
+              <div className="empty-state-sub">or start a new PR review on the left</div>
+            </div>
+          )
+        }
       </div>
     </div>
   )

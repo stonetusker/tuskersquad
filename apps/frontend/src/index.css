@@ -1,3 +1,2 @@
-/* Global reset — App.css handles all theme styles */
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; }

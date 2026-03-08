@@ -7,6 +7,11 @@ import asyncio
 
 app = FastAPI(title="TuskerSquad Dashboard API")
 
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 # Allow dev frontend to call dashboard APIs
 app.add_middleware(
     CORSMiddleware,
@@ -207,4 +212,37 @@ async def get_merge_status(workflow_id: str):
             return r.json()
     except Exception as exc:
         logger.exception("failed_get_merge_status")
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/ui/workflow/{workflow_id}/merge-status")
+async def get_merge_status(workflow_id: str):
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{LANGGRAPH_URL}/api/workflow/{workflow_id}/merge-status", timeout=10.0)
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/ui/workflows/heatmap")
+async def get_heatmap():
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{LANGGRAPH_URL}/api/workflows/heatmap", timeout=10.0)
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/ui/workflows/{workflow_id}/reasoning")
+async def get_reasoning(workflow_id: str):
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{LANGGRAPH_URL}/api/workflows/{workflow_id}/reasoning", timeout=10.0)
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))

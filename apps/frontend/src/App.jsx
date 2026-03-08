@@ -7,29 +7,28 @@ export default function App() {
     <div className="app-root">
       <header className="app-header">
         <div className="brand-block">
-          {/* Logo mark */}
-          <div className="logo-mark">
-            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-              <rect width="28" height="28" rx="6" fill="#00b4d8"/>
-              <path d="M7 14 L14 7 L21 14 L14 21 Z"
-                    fill="none" stroke="#0b1220" strokeWidth="2.5"
-                    strokeLinejoin="round"/>
-              <circle cx="14" cy="14" r="3" fill="#0b1220"/>
-            </svg>
-          </div>
-          <div>
-            <div className="brand-name">
-              Stonetusker Systems
-            </div>
-            <div className="brand-sub">TuskerSquad · Agentic AI Governance</div>
+          <svg className="brand-icon" width="32" height="32" viewBox="0 0 32 32" fill="none">
+            <rect width="32" height="32" rx="8" fill="#FACF0E"/>
+            <path d="M8 16 L16 6 L24 16 L16 26 Z" fill="none" stroke="#202123" strokeWidth="2.5" strokeLinejoin="round"/>
+            <circle cx="16" cy="16" r="3.5" fill="#202123"/>
+            <circle cx="16" cy="6"  r="2" fill="#202123"/>
+            <circle cx="24" cy="16" r="2" fill="#202123"/>
+            <circle cx="16" cy="26" r="2" fill="#202123"/>
+            <circle cx="8"  cy="16" r="2" fill="#202123"/>
+          </svg>
+          <div className="brand-text">
+            <span className="brand-name">TuskerSquad</span>
+            <span className="brand-tag">AI PR Governance</span>
           </div>
         </div>
 
-        <div className="header-right">
-          <div className="pipeline-label">
-            <span className="pipeline-dot" />
-            8-Agent AI Pipeline
-          </div>
+        <nav className="header-nav">
+          <span className="nav-pill active">Dashboard</span>
+        </nav>
+
+        <div className="header-status">
+          <span className="status-dot pulsing" />
+          <span className="status-text">8 Agents Active</span>
         </div>
       </header>
 

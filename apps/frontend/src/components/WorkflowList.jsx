@@ -1,28 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import api from '../api'
 
-const STATUS_COLOR = {
-  COMPLETED:              '#22c55e',
-  WAITING_HUMAN_APPROVAL: '#f59e0b',
-  RUNNING:                '#3b82f6',
-  FAILED:                 '#ef4444',
-}
-
-const STATUS_LABEL = {
-  COMPLETED:              'Done',
-  WAITING_HUMAN_APPROVAL: 'Awaiting',
-  RUNNING:                'Running',
-  FAILED:                 'Failed',
-}
-
-function MiniDot({ color, pulse }) {
-  return (
-    <span style={{
-      width: 7, height: 7, borderRadius: '50%',
-      background: color, display: 'inline-block', flexShrink: 0,
-      animation: pulse ? 'ts-pulse 1.4s ease-in-out infinite' : 'none',
-    }} />
-  )
+const STATUS_CFG = {
+  COMPLETED:              { color: '#22c55e', label: 'Done'     },
+  WAITING_HUMAN_APPROVAL: { color: '#FACF0E', label: 'Awaiting' },
+  RUNNING:                { color: '#3b82f6', label: 'Running'  },
+  FAILED:                 { color: '#ef4444', label: 'Failed'   },
 }
 
 export default function WorkflowList({ onSelect, selectedId }) {
@@ -32,7 +15,7 @@ export default function WorkflowList({ onSelect, selectedId }) {
   useEffect(() => {
     let mounted = true
     async function load() {
-      setLoading(true)
+      if (!loading) setLoading(true)
       try {
         const data = await api.listWorkflows()
         if (mounted) setList(data || [])
@@ -48,56 +31,55 @@ export default function WorkflowList({ onSelect, selectedId }) {
   }, [])
 
   return (
-    <div className="panel workflows">
-      <h3>
-        🗂 Workflows
-        {loading && (
-          <span style={{ fontSize: 10, color: '#94a3b8', marginLeft: 6,
-                         fontWeight: 400 }}>syncing…</span>
+    <div className="panel">
+      <div className="panel-header">
+        🗂 Recent Reviews
+        {loading && <span style={{ fontSize: 9, opacity: 0.5, marginLeft: 4 }}>●</span>}
+      </div>
+      <div style={{ padding: '8px 10px' }}>
+        {list.length === 0 && !loading && (
+          <div style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', padding: '16px 0' }}>
+            No reviews yet — start one above
+          </div>
         )}
-      </h3>
-
-      <ul className="workflow-list">
-        {list.map(w => {
-          const isRunning = w.status === 'RUNNING'
-          const color     = STATUS_COLOR[w.status] || '#94a3b8'
-          const label     = STATUS_LABEL[w.status] || w.status
-
-          return (
-            <li
-              key={w.workflow_id}
-              className={w.workflow_id === selectedId ? 'selected' : ''}
-              onClick={() => onSelect && onSelect(w.workflow_id)}
-            >
-              <div className="wf-title">
-                {w.repository}
-                <span style={{ color: '#00b4d8', fontWeight: 500 }}>
-                  {' '}#{w.pr_number}
-                </span>
-              </div>
-              <div className="wf-meta">
-                <MiniDot color={color} pulse={isRunning} />
-                <span style={{ color, fontWeight: 600, fontSize: 10 }}>{label}</span>
-                {w.merge_status === 'success' && (
-                  <span style={{ fontSize: 10, color: '#22c55e' }}>🔀 merged</span>
-                )}
-                {w.deploy_status === 'triggered' && (
-                  <span style={{ fontSize: 10, color: '#3b82f6' }}>🚀 deployed</span>
-                )}
-                <span style={{ color: '#cbd5e1' }}>
-                  {w.created_at ? new Date(w.created_at).toLocaleTimeString() : ''}
-                </span>
-              </div>
-            </li>
-          )
-        })}
-      </ul>
-
-      {list.length === 0 && !loading && (
-        <div className="muted" style={{ padding: '12px 0', textAlign: 'center' }}>
-          No workflows yet — start one above.
-        </div>
-      )}
+        <ul className="wf-list">
+          {list.map(w => {
+            const cfg = STATUS_CFG[w.status] || { color: '#94a3b8', label: w.status }
+            const isRunning = w.status === 'RUNNING'
+            return (
+              <li
+                key={w.workflow_id}
+                className={`wf-item ${w.workflow_id === selectedId ? 'selected' : ''}`}
+                onClick={() => onSelect?.(w.workflow_id)}
+              >
+                <div className="wf-repo">
+                  {w.repository}
+                  <span className="wf-pr-num">#{w.pr_number}</span>
+                </div>
+                <div className="wf-meta">
+                  <span
+                    className="mini-dot"
+                    style={{
+                      background: cfg.color,
+                      animation: isRunning ? 'ts-pulse 1.4s ease-in-out infinite' : 'none',
+                    }}
+                  />
+                  <span style={{ color: cfg.color, fontWeight: 700, fontSize: 10 }}>{cfg.label}</span>
+                  {w.merge_status === 'success' && (
+                    <span style={{ fontSize: 9, color: '#22c55e', fontWeight: 600 }}>🔀 merged</span>
+                  )}
+                  {w.deploy_status === 'triggered' && (
+                    <span style={{ fontSize: 9, color: '#3b82f6', fontWeight: 600 }}>🚀 deployed</span>
+                  )}
+                  <span style={{ color: '#d1d5db', marginLeft: 'auto', fontSize: 10 }}>
+                    {w.created_at ? new Date(w.created_at).toLocaleTimeString() : ''}
+                  </span>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
     </div>
   )
 }
