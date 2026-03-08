@@ -6,6 +6,13 @@ WORKDIR /app
 COPY apps/backend/requirements.txt /tmp/demo-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/demo-requirements.txt
 
+
+# Install system deps needed by psycopg2-binary and compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl vim \
+    && rm -rf /var/lib/apt/lists/*
+
+
 # Copy full project (needed for absolute imports like apps.backend.*)
 COPY . /app
 
