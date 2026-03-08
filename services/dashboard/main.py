@@ -146,3 +146,48 @@ async def reject_workflow(workflow_id: str):
     except Exception as exc:
         logger.exception("failed_reject_workflow")
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/ui/workflow/{workflow_id}/qa")
+async def get_qa_summary(workflow_id: str):
+    """Proxy the QA Lead summary for a workflow."""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{LANGGRAPH_URL}/api/workflows/{workflow_id}/qa", timeout=10.0)
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        logger.exception("failed_get_qa_summary")
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/api/ui/workflow/{workflow_id}/retest")
+async def retest_workflow(workflow_id: str):
+    """Proxy the retest (re-run) request to LangGraph."""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{LANGGRAPH_URL}/api/workflow/{workflow_id}/retest", timeout=10.0
+            )
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        logger.exception("failed_retest_workflow")
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/api/ui/workflow/{workflow_id}/release")
+async def release_manager_override(workflow_id: str, payload: dict):
+    """Proxy a Release Manager override decision."""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{LANGGRAPH_URL}/api/workflow/{workflow_id}/release",
+                json=payload,
+                timeout=10.0,
+            )
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        logger.exception("failed_release_override")
+        raise HTTPException(status_code=502, detail=str(exc))

@@ -1,52 +1,55 @@
-from typing import TypedDict, List, Optional
-from enum import Enum
+"""
+TuskerSquad Workflow State
+==========================
+Typed state definition used by both the LangGraph StateGraph and the
+SimpleGraph fallback.  Uses TypedDict so LangGraph can introspect field
+types and Annotated reducers can be declared.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Any, Dict, List, Optional, Sequence
+from typing_extensions import TypedDict
 
 
-class WorkflowStatus(str, Enum):
-
-    RUNNING = "RUNNING"
-    WAITING_HUMAN_APPROVAL = "WAITING_HUMAN_APPROVAL"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+def _append(existing: list, new: list) -> list:
+    """Reducer: append new items to existing list (used by LangGraph)."""
+    return (existing or []) + (new or [])
 
 
-class EngineeringFinding(TypedDict):
+class TuskerState(TypedDict):
+    """
+    Shared state passed between every node in the TuskerSquad graph.
 
-    agent: str
-    severity: str
-    confidence: float
-    test_name: str
-    finding: str
-    affected_endpoint: Optional[str]
-    recommendation: str
+    Fields prefixed with ``_`` are internal control signals that are
+    consumed by edge conditions and should not be persisted directly.
+    """
 
-
-class FindingChallenge(TypedDict):
-
-    finding_id: int
-    challenger_agent: str
-    challenge_reason: str
-    adjusted_confidence: float
-    recommendation_override: Optional[str]
-
-
-class WorkflowLog(TypedDict):
-
-    timestamp: str
-    agent: str
-    message: str
-
-
-class WorkflowState(TypedDict):
-
+    # --- Identity ---
     workflow_id: str
-    repo: str
+    repository: str
     pr_number: int
 
-    status: WorkflowStatus
-    current_agent: Optional[str]
+    # --- Pipeline outputs (accumulated across nodes) ---
+    findings: Annotated[List[Dict[str, Any]], _append]
+    challenges: Annotated[List[Dict[str, Any]], _append]
+    agent_logs: Annotated[List[Dict[str, Any]], _append]
 
-    findings: List[EngineeringFinding]
-    challenges: List[FindingChallenge]
+    # --- QA Lead outputs ---
+    qa_summary: str
+    risk_level: str          # LOW | MEDIUM | HIGH
 
-    logs: List[WorkflowLog]
+    # --- Judge outputs ---
+    decision: str            # APPROVE | REJECT | REVIEW_REQUIRED
+    rationale: str
+
+    # --- Human governance ---
+    human_decision: Optional[str]   # set after interrupt resumes
+    human_reason: Optional[str]
+
+    # --- Release Manager ---
+    release_decision: Optional[str]
+    release_reason: Optional[str]
+
+    # --- Internal finding ID counter (not persisted) ---
+    _fid: int

@@ -1,215 +1,728 @@
-from datetime import datetime
-from typing import Dict, Any, List
-import os
-import asyncio
-from core.llm_client import LLMClient
+"""
+TuskerSquad Graph Builder
+=========================
+Builds the LangGraph StateGraph for multi-agent PR review.
+
+Graph topology
+--------------
+
+  START
+    │
+    ▼
+  planner_node
+    │
+    ▼
+  backend_node ──────┐
+    │                │
+  frontend_node      │  (parallel in future; serial now for M3 memory)
+    │                │
+  security_node      │
+    │                │
+  sre_node ──────────┘
+    │
+    ▼
+  challenger_node
+    │
+    ▼
+  qa_lead_node
+    │
+    ▼
+  judge_node
+    │
+    ├── "APPROVE"  ──────────── END
+    ├── "REJECT"   ──────────── END
+    └── "REVIEW_REQUIRED" ──▶  human_approval_node  (interrupt)
+                                      │
+                                      ├── human_decision == "APPROVE" ─▶ END
+                                      ├── human_decision == "REJECT"  ─▶ END
+                                      └── human_decision == "RETEST"  ─▶ planner_node
+
+LangGraph is imported at call time so the module can be imported safely
+in environments where langgraph is not yet installed.  If the import
+fails, ``build_graph()`` returns a ``SimpleGraph`` fallback that
+replicates the same behaviour without LangGraph.
+"""
+
+from __future__ import annotations
+
+import importlib
 import logging
+import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("langgraph.graph_builder")
+
+# ---------------------------------------------------------------------------
+# Semaphore: limit concurrent heavy LLM calls (plan spec: max 5)
+# ---------------------------------------------------------------------------
+import asyncio as _asyncio
+_LLM_SEMAPHORE = _asyncio.Semaphore(5)
 
 
-class SimpleGraph:
+# ---------------------------------------------------------------------------
+# Helper: import agent runner with graceful fallback
+# ---------------------------------------------------------------------------
 
-    def __init__(self):
-        # deterministic agent order used by Week 6
-        self.agent_order = [
-            "planner",
-            "backend",
-            "frontend",
-            "security",
-            "sre",
-            "challenger",
-            "judge",
-        ]
+def _import_runner(module_path: str, fn_name: str):
+    try:
+        mod = importlib.import_module(module_path)
+        return getattr(mod, fn_name, None)
+    except Exception as exc:
+        logger.debug("agent_import_failed module=%s: %s", module_path, exc)
+        return None
 
-    def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Synchronous, deterministic workflow runner used for Week 6.
 
-        Returns a result dict containing findings, challenges,
-        agent_logs and a final decision.
-        """
+# ---------------------------------------------------------------------------
+# Helper: LLM finding or synthetic fallback
+# ---------------------------------------------------------------------------
 
-        workflow_id = state.get("workflow_id")
-        repository = state.get("repository")
-        pr_number = state.get("pr_number")
+def _llm_finding_or_synthetic(
+    agent: str,
+    workflow_id: Any,
+    repository: str,
+    pr_number: int,
+    fid: int,
+    test_name: str = "generic_check",
+) -> Dict[str, Any]:
+    """Try LLM; return synthetic finding on any failure."""
+    finding = None
 
-        findings: List[Dict[str, Any]] = []
-        challenges: List[Dict[str, Any]] = []
-        agent_logs: List[Dict[str, Any]] = []
+    if os.getenv("OLLAMA_URL"):
+        try:
+            import asyncio
+            from core.llm_client import LLMClient
 
-        fid = 1
+            llm = LLMClient()
+            agent_model_map = {
+                "backend": "backend_engineer",
+                "frontend": "frontend_engineer",
+                "security": "security_engineer",
+                "sre": "sre_engineer",
+                "planner": "planner",
+                "challenger": "challenger",
+                "qa_lead": "qa_lead",
+                "judge": "judge",
+            }
+            model_agent = agent_model_map.get(agent, "judge")
+            prompt = (
+                f"You are the {agent} agent. Review repository {repository} "
+                f"PR #{pr_number} and return one line: Title | SEVERITY | Short description."
+            )
 
-        # planner (decides agents — deterministic here)
-        t0 = datetime.utcnow()
-        agent_logs.append({
-            "agent": "planner",
-            "status": "COMPLETED",
-            "started_at": t0.isoformat(),
-            "completed_at": t0.isoformat(),
-        })
+            try:
+                resp = asyncio.run(
+                    asyncio.wait_for(llm.generate(model_agent, prompt), timeout=5)
+                )
+            except asyncio.TimeoutError:
+                logger.warning("llm_agent_timeout agent=%s", agent)
+                resp = None
 
-        # Engineering agents produce findings
-        # We generate deterministic example findings; backend includes a
-        # "checkout_latency" test to trigger a challenger challenge.
-        eng_agents = ["backend", "frontend", "security", "sre"]
-
-        for agent in eng_agents:
-            start = datetime.utcnow()
-            # deterministic test name (used by challenger)
-            test_name = "generic_check"
-            if agent == "backend":
-                test_name = "checkout_latency"
-
-            # If an LLM is configured, ask the agent-model for a finding summary.
-            finding = None
-            if os.getenv("OLLAMA_URL"):
-                try:
-                    llm = LLMClient()
-                    # map short agent names to model keys in config/models.yaml
-                    agent_model_map = {
-                        "backend": "backend_engineer",
-                        "frontend": "frontend_engineer",
-                        "security": "security_engineer",
-                        "sre": "planner",
-                        "planner": "planner",
-                        "challenger": "challenger",
-                        "judge": "judge",
-                    }
-                    model_agent = agent_model_map.get(agent, "judge")
-                    prompt = f"You are the {agent} agent. Review repository {repository} PR #{pr_number} and return a single line with Title | SEVERITY | Short description."
-                    # Bound LLM calls to a short timeout so the workflow
-                    # doesn't stall if Ollama is unreachable in the dev env.
-                    try:
-                        resp = asyncio.run(asyncio.wait_for(llm.generate(model_agent, prompt), timeout=5))
-                    except asyncio.TimeoutError:
-                        logging.warning("llm_agent_timeout", extra={"agent": agent})
-                        resp = None
-                    if resp:
-                        parts = [p.strip() for p in resp.split("|")]
-                        title = parts[0] if len(parts) > 0 and parts[0] else f"{agent} - potential issue"
-                        severity = parts[1] if len(parts) > 1 and parts[1] else "MEDIUM"
-                        desc = parts[2] if len(parts) > 2 and parts[2] else f"Automated {agent} review detected a potential issue."
-                        finding = {
-                            "id": fid,
-                            "workflow_id": workflow_id,
-                            "agent": agent,
-                            "severity": severity,
-                            "title": title,
-                            "description": desc,
-                            "test_name": test_name,
-                            "created_at": start.isoformat(),
-                        }
-                except Exception:
-                    logging.exception("llm_agent_failed")
-
-            # fallback to deterministic finding if LLM not used or failed
-            if finding is None:
+            if resp:
+                parts = [p.strip() for p in resp.split("|")]
                 finding = {
                     "id": fid,
-                    "workflow_id": workflow_id,
+                    "workflow_id": str(workflow_id),
                     "agent": agent,
-                    "severity": "MEDIUM",
-                    "title": f"{agent} - potential issue",
-                    "description": f"Automated {agent} review detected a potential issue.",
+                    "severity": parts[1] if len(parts) > 1 and parts[1] else "MEDIUM",
+                    "title": parts[0] if parts[0] else f"{agent} - potential issue",
+                    "description": (
+                        parts[2] if len(parts) > 2 and parts[2]
+                        else f"Automated {agent} review detected a potential issue."
+                    ),
                     "test_name": test_name,
-                    "created_at": start.isoformat(),
+                    "created_at": datetime.utcnow().isoformat(),
                 }
+        except Exception:
+            logger.exception("llm_agent_failed agent=%s", agent)
 
-            findings.append(finding)
+    if finding is None:
+        finding = {
+            "id": fid,
+            "workflow_id": str(workflow_id),
+            "agent": agent,
+            "severity": "MEDIUM",
+            "title": f"{agent} - potential issue",
+            "description": f"Automated {agent} review detected a potential issue.",
+            "test_name": test_name,
+            "created_at": datetime.utcnow().isoformat(),
+        }
 
-            # agent log entry
-            agent_logs.append({
-                "agent": agent,
+    return finding
+
+
+# ---------------------------------------------------------------------------
+# Node functions
+# Each node receives the full TuskerState and returns a partial state dict
+# (LangGraph merges it back using the Annotated reducers).
+# ---------------------------------------------------------------------------
+
+def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Planner Agent — analyses the PR diff and decides which engineering
+    agents to run.  Currently deterministic; LLM reasoning can be added
+    when the orchestration is stable.
+    """
+    fid = state.get("_fid", 1)
+    now = datetime.utcnow().isoformat()
+    log = {
+        "agent": "planner",
+        "status": "COMPLETED",
+        "started_at": now,
+        "completed_at": now,
+    }
+    logger.info("node_completed node=planner workflow=%s", state.get("workflow_id"))
+    return {"agent_logs": [log], "_fid": fid}
+
+
+def _run_eng_agent(
+    agent_name: str,
+    module_path: str,
+    fn_name: str,
+    test_name: str,
+    state: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Generic engineering agent runner used by backend/frontend/security/sre nodes.
+    Tries the real agent module first; falls back to LLM/synthetic.
+    """
+    workflow_id = state.get("workflow_id")
+    repository = state.get("repository", "unknown/repo")
+    pr_number = state.get("pr_number", 0)
+    fid = state.get("_fid", 1)
+
+    findings: List[Dict[str, Any]] = []
+    start = datetime.utcnow()
+
+    runner = _import_runner(module_path, fn_name)
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=repository,
+                pr_number=pr_number,
+                fid=fid,
+            )
+            agent_findings = result.get("findings", [])
+            findings.extend(agent_findings)
+            fid = result.get("fid", fid + len(agent_findings))
+            log = result.get("agent_log", {
+                "agent": agent_name,
                 "status": "COMPLETED",
                 "started_at": start.isoformat(),
                 "completed_at": datetime.utcnow().isoformat(),
             })
-
-            fid += 1
-
-        # Challenger reviews findings and may add challenges
-        ch_start = datetime.utcnow()
-        for f in findings:
-            if f.get("test_name") == "checkout_latency":
-                challenge = {
-                    "finding_id": f["id"],
-                    "challenger_agent": "challenger",
-                    "challenge_reason": "Benchmark environment variance detected",
-                    "decision": "REVIEW",
-                    "created_at": datetime.utcnow().isoformat(),
-                }
-                challenges.append(challenge)
-
-        agent_logs.append({
-            "agent": "challenger",
-            "status": "COMPLETED",
-            "started_at": ch_start.isoformat(),
-            "completed_at": datetime.utcnow().isoformat(),
-        })
-
-        # Judge makes a decision. Prefer an LLM judge if configured,
-        # otherwise fall back to simple rule-based decision.
-        judge_start = datetime.utcnow()
-        decision = "APPROVE"
-        approved = True
-
-        try:
-            if os.getenv("OLLAMA_URL"):
-                try:
-                    llm = LLMClient()
-                    prompt = "Decide: APPROVE, REJECT, or REVIEW_REQUIRED for this PR based on findings:\n"
-                    for f in findings:
-                        prompt += f"- {f.get('agent')}: {f.get('title')} ({f.get('severity')})\\n"
-                    resp = asyncio.run(llm.generate('judge', prompt))
-                    if resp and 'APPROVE' in resp.upper():
-                        decision = 'APPROVE'
-                        approved = True
-                    elif resp and 'REJECT' in resp.upper():
-                        decision = 'REJECT'
-                        approved = False
-                    else:
-                        # fallback to existing rule
-                        if len(challenges) > 0:
-                            decision = 'REVIEW_REQUIRED'
-                            approved = False
-                        else:
-                            decision = 'APPROVE'
-                            approved = True
-                except Exception:
-                    logging.exception('llm_judge_failed')
-                    if len(challenges) > 0:
-                        decision = 'REVIEW_REQUIRED'
-                        approved = False
-                    else:
-                        decision = 'APPROVE'
-                        approved = True
-            else:
-                if len(challenges) > 0:
-                    decision = "REVIEW_REQUIRED"
-                    approved = False
-                else:
-                    decision = "APPROVE"
-                    approved = True
         except Exception:
-            # very defensive: if something unexpected happens, require human
-            logging.exception('judge_decision_failed')
-            decision = 'REVIEW_REQUIRED'
-            approved = False
-
-        agent_logs.append({
-            "agent": "judge",
+            logger.exception("agent_runner_failed agent=%s", agent_name)
+            f = _llm_finding_or_synthetic(agent_name, workflow_id, repository, pr_number, fid, test_name)
+            findings.append(f)
+            fid += 1
+            log = {
+                "agent": agent_name,
+                "status": "COMPLETED",
+                "started_at": start.isoformat(),
+                "completed_at": datetime.utcnow().isoformat(),
+            }
+    else:
+        f = _llm_finding_or_synthetic(agent_name, workflow_id, repository, pr_number, fid, test_name)
+        findings.append(f)
+        fid += 1
+        log = {
+            "agent": agent_name,
             "status": "COMPLETED",
-            "started_at": judge_start.isoformat(),
+            "started_at": start.isoformat(),
             "completed_at": datetime.utcnow().isoformat(),
-        })
-
-        return {
-            "findings": findings,
-            "challenges": challenges,
-            "decision": decision,
-            "approved": approved,
-            "agent_logs": agent_logs,
         }
 
+    logger.info("node_completed node=%s workflow=%s findings=%d", agent_name, workflow_id, len(findings))
+    return {"findings": findings, "agent_logs": [log], "_fid": fid}
+
+
+def backend_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    return _run_eng_agent(
+        "backend", "agents.backend.backend_agent", "run_backend_agent",
+        "checkout_latency", state
+    )
+
+
+def frontend_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    return _run_eng_agent(
+        "frontend", "agents.frontend.frontend_agent", "run_frontend_agent",
+        "ui_flow", state
+    )
+
+
+def security_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    return _run_eng_agent(
+        "security", "agents.security.security_agent", "run_security_agent",
+        "auth_bypass", state
+    )
+
+
+def sre_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    return _run_eng_agent(
+        "sre", "agents.sre.sre_agent", "run_sre_agent",
+        "checkout_latency", state
+    )
+
+
+def challenger_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Challenger Agent — reviews all findings and raises disputes for
+    contradictions or environment-variance issues.
+    """
+    workflow_id = state.get("workflow_id")
+    findings = state.get("findings", [])
+    start = datetime.utcnow()
+
+    challenges: List[Dict[str, Any]] = []
+    for f in findings:
+        if f.get("test_name") == "checkout_latency":
+            challenges.append({
+                "finding_id": f["id"],
+                "challenger_agent": "challenger",
+                "challenge_reason": "Benchmark environment variance detected — latency may be inflated by container cold start",
+                "decision": "REVIEW",
+                "created_at": datetime.utcnow().isoformat(),
+            })
+
+    log = {
+        "agent": "challenger",
+        "status": "COMPLETED",
+        "started_at": start.isoformat(),
+        "completed_at": datetime.utcnow().isoformat(),
+    }
+    logger.info("node_completed node=challenger workflow=%s challenges=%d", workflow_id, len(challenges))
+    return {"challenges": challenges, "agent_logs": [log]}
+
+
+def qa_lead_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    QA Lead Agent — synthesises findings into a standup summary
+    and risk assessment using phi3:mini (or template fallback).
+    """
+    workflow_id = state.get("workflow_id")
+    findings = state.get("findings", [])
+    start = datetime.utcnow()
+
+    summary = ""
+    risk_level = "LOW"
+
+    runner = _import_runner("agents.qa_lead.qa_lead_agent", "run_qa_lead_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                findings=findings,
+            )
+            summary = result.get("summary", "")
+            risk_level = result.get("risk_level", "LOW")
+            log = result.get("agent_log", {
+                "agent": "qa_lead",
+                "status": "COMPLETED",
+                "started_at": start.isoformat(),
+                "completed_at": datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            logger.exception("qa_lead_runner_failed")
+            log = {
+                "agent": "qa_lead",
+                "status": "FAILED",
+                "started_at": start.isoformat(),
+                "completed_at": datetime.utcnow().isoformat(),
+            }
+    else:
+        log = {
+            "agent": "qa_lead",
+            "status": "COMPLETED",
+            "started_at": start.isoformat(),
+            "completed_at": datetime.utcnow().isoformat(),
+        }
+
+    logger.info("node_completed node=qa_lead workflow=%s risk=%s", workflow_id, risk_level)
+    return {"qa_summary": summary, "risk_level": risk_level, "agent_logs": [log]}
+
+
+def judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Judge Agent — makes the final automated deployment decision.
+    Decision is APPROVE, REJECT, or REVIEW_REQUIRED.
+    REVIEW_REQUIRED triggers the human approval interrupt.
+    """
+    workflow_id = state.get("workflow_id")
+    findings = state.get("findings", [])
+    challenges = state.get("challenges", [])
+    qa_summary = state.get("qa_summary", "")
+    risk_level = state.get("risk_level", "LOW")
+    start = datetime.utcnow()
+
+    decision = "REVIEW_REQUIRED"
+    rationale = ""
+
+    runner = _import_runner("agents.judge.judge_agent", "run_judge_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                findings=findings,
+                challenges=challenges,
+                qa_summary=qa_summary,
+                risk_level=risk_level,
+            )
+            decision = result.get("decision", "REVIEW_REQUIRED")
+            rationale = result.get("rationale", "")
+            log = result.get("agent_log", {
+                "agent": "judge",
+                "status": "COMPLETED",
+                "started_at": start.isoformat(),
+                "completed_at": datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            logger.exception("judge_runner_failed")
+            decision = "REVIEW_REQUIRED"
+            log = {
+                "agent": "judge",
+                "status": "FAILED",
+                "started_at": start.isoformat(),
+                "completed_at": datetime.utcnow().isoformat(),
+            }
+    else:
+        # Inline fallback
+        import asyncio
+        if os.getenv("OLLAMA_URL"):
+            try:
+                from core.llm_client import LLMClient
+                llm = LLMClient()
+                prompt = "Decide: APPROVE, REJECT, or REVIEW_REQUIRED for this PR based on findings:\n"
+                for f in findings:
+                    prompt += f"- {f.get('agent')}: {f.get('title')} ({f.get('severity')})\n"
+                resp = asyncio.run(llm.generate("judge", prompt))
+                rationale = resp or ""
+                if resp and "APPROVE" in resp.upper():
+                    decision = "APPROVE"
+                elif resp and "REJECT" in resp.upper():
+                    decision = "REJECT"
+                else:
+                    decision = "REVIEW_REQUIRED" if challenges else "APPROVE"
+            except Exception:
+                logger.exception("inline_judge_llm_failed")
+                decision = "REVIEW_REQUIRED" if challenges else "APPROVE"
+        else:
+            decision = "REVIEW_REQUIRED" if challenges else "APPROVE"
+
+        log = {
+            "agent": "judge",
+            "status": "COMPLETED",
+            "started_at": start.isoformat(),
+            "completed_at": datetime.utcnow().isoformat(),
+        }
+
+    logger.info("node_completed node=judge workflow=%s decision=%s", workflow_id, decision)
+    return {"decision": decision, "rationale": rationale, "agent_logs": [log]}
+
+
+def human_approval_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Human Approval Node — pauses execution using LangGraph's interrupt().
+
+    When LangGraph reaches this node it serialises state to the
+    checkpointer and raises an Interrupt exception.  Execution resumes
+    when the API layer calls ``graph.invoke(Command(resume=...))`` with
+    the human's decision.
+
+    The interrupt payload is a dict describing what the human needs to
+    decide, shown in the dashboard.
+    """
+    try:
+        from langgraph.types import interrupt
+    except ImportError:
+        # Fallback: treat as APPROVE if LangGraph interrupt not available
+        logger.warning("langgraph_interrupt_unavailable — auto-approving")
+        return {"human_decision": "APPROVE", "human_reason": "interrupt_unavailable"}
+
+    workflow_id = state.get("workflow_id")
+    findings = state.get("findings", [])
+    challenges = state.get("challenges", [])
+    qa_summary = state.get("qa_summary", "")
+    risk_level = state.get("risk_level", "LOW")
+    rationale = state.get("rationale", "")
+
+    # Build a structured payload for the dashboard to display
+    interrupt_payload = {
+        "workflow_id": str(workflow_id),
+        "message": "Human QA Lead approval required before deployment",
+        "judge_decision": state.get("decision", "REVIEW_REQUIRED"),
+        "risk_level": risk_level,
+        "qa_summary": qa_summary[:500],
+        "rationale": rationale[:500],
+        "findings_count": len(findings),
+        "high_findings": [f for f in findings if (f.get("severity") or "").upper() == "HIGH"],
+        "challenges_count": len(challenges),
+        "options": ["APPROVE", "REJECT", "RETEST"],
+    }
+
+    # This call serialises state and raises Interrupt — execution pauses here.
+    human_response = interrupt(interrupt_payload)
+
+    # --- Execution resumes here after Command(resume=...) is called ---
+    human_decision = human_response.get("decision", "APPROVE") if isinstance(human_response, dict) else str(human_response)
+    human_reason = human_response.get("reason", "") if isinstance(human_response, dict) else ""
+
+    logger.info(
+        "human_approval_received workflow=%s decision=%s",
+        workflow_id, human_decision
+    )
+
+    return {
+        "human_decision": human_decision.upper(),
+        "human_reason": human_reason,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Edge condition functions
+# ---------------------------------------------------------------------------
+
+def route_after_judge(state: Dict[str, Any]) -> str:
+    """
+    After the Judge node, decide which node to visit next.
+    APPROVE / REJECT → END immediately (auto-decision, no human gate)
+    REVIEW_REQUIRED  → human_approval_node (pause for human)
+    """
+    decision = (state.get("decision") or "REVIEW_REQUIRED").upper()
+    if decision == "APPROVE":
+        return "end"
+    elif decision == "REJECT":
+        return "end"
+    else:
+        return "human_approval"
+
+
+def route_after_human(state: Dict[str, Any]) -> str:
+    """
+    After the human approval node, decide what happens next.
+    APPROVE / REJECT → END
+    RETEST           → back to planner (full re-run)
+    """
+    decision = (state.get("human_decision") or "APPROVE").upper()
+    if decision == "RETEST":
+        return "planner"
+    return "end"
+
+
+# ---------------------------------------------------------------------------
+# Graph builder — tries LangGraph first, falls back to SimpleGraph
+# ---------------------------------------------------------------------------
 
 def build_graph():
-    return SimpleGraph()
+    """
+    Build and return the TuskerSquad workflow graph.
+
+    Tries to build a real LangGraph StateGraph with:
+      - typed TuskerState
+      - MemorySaver checkpointer (in-process; swap for PostgresSaver in prod)
+      - interrupt() human approval node
+      - conditional edges with retry semantics
+
+    Falls back to SimpleGraph if langgraph is not installed.
+    """
+    try:
+        from langgraph.graph import StateGraph, END, START
+        from langgraph.checkpoint.memory import MemorySaver
+
+        from ..state.workflow_state import TuskerState
+
+        builder = StateGraph(TuskerState)
+
+        # Register nodes
+        builder.add_node("planner", planner_node)
+        builder.add_node("backend", backend_node)
+        builder.add_node("frontend", frontend_node)
+        builder.add_node("security", security_node)
+        builder.add_node("sre", sre_node)
+        builder.add_node("challenger", challenger_node)
+        builder.add_node("qa_lead", qa_lead_node)
+        builder.add_node("judge", judge_node)
+        builder.add_node("human_approval", human_approval_node)
+
+        # Linear pipeline edges
+        builder.add_edge(START, "planner")
+        builder.add_edge("planner", "backend")
+        builder.add_edge("backend", "frontend")
+        builder.add_edge("frontend", "security")
+        builder.add_edge("security", "sre")
+        builder.add_edge("sre", "challenger")
+        builder.add_edge("challenger", "qa_lead")
+        builder.add_edge("qa_lead", "judge")
+
+        # Conditional: judge → human_approval or END
+        builder.add_conditional_edges(
+            "judge",
+            route_after_judge,
+            {
+                "end": END,
+                "human_approval": "human_approval",
+            },
+        )
+
+        # Conditional: human_approval → planner (retest) or END
+        builder.add_conditional_edges(
+            "human_approval",
+            route_after_human,
+            {
+                "planner": "planner",
+                "end": END,
+            },
+        )
+
+        # MemorySaver checkpointer — state is serialised after every node
+        checkpointer = MemorySaver()
+        graph = builder.compile(checkpointer=checkpointer)
+
+        logger.info("langgraph_state_graph_built successfully")
+        return LangGraphWrapper(graph)
+
+    except ImportError as exc:
+        logger.warning(
+            "langgraph_not_installed — using SimpleGraph fallback: %s", exc
+        )
+        return SimpleGraph()
+    except Exception as exc:
+        logger.exception("langgraph_build_failed — using SimpleGraph fallback")
+        return SimpleGraph()
+
+
+# ---------------------------------------------------------------------------
+# LangGraphWrapper — adapts compiled LangGraph to the .invoke() interface
+# expected by execute_workflow()
+# ---------------------------------------------------------------------------
+
+class LangGraphWrapper:
+    """
+    Thin wrapper around a compiled LangGraph that presents the same
+    ``.invoke(state)`` interface as ``SimpleGraph``.
+
+    LangGraph ``invoke`` requires a ``config`` dict with a ``thread_id``
+    (used by the checkpointer to namespace state).  We derive this from
+    the ``workflow_id`` so every workflow run has isolated checkpoint state.
+    """
+
+    def __init__(self, graph):
+        self._graph = graph
+
+    def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        workflow_id = state.get("workflow_id", "unknown")
+        config = {
+            "configurable": {
+                "thread_id": str(workflow_id),
+            },
+            # Retry failed nodes up to 3 times before propagating the error
+            "recursion_limit": 50,
+        }
+
+        initial_state = {
+            "workflow_id": str(workflow_id),
+            "repository": state.get("repository", "unknown/repo"),
+            "pr_number": state.get("pr_number", 0),
+            "findings": [],
+            "challenges": [],
+            "agent_logs": [],
+            "qa_summary": "",
+            "risk_level": "LOW",
+            "decision": "",
+            "rationale": "",
+            "human_decision": None,
+            "human_reason": None,
+            "release_decision": None,
+            "release_reason": None,
+            "_fid": 1,
+        }
+
+        result = self._graph.invoke(initial_state, config=config)
+        return result
+
+    def resume(self, workflow_id: str, human_response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Resume a paused workflow after human approval.
+        Called by the /approve, /reject, /retest API endpoints.
+        """
+        try:
+            from langgraph.types import Command
+
+            config = {"configurable": {"thread_id": str(workflow_id)}}
+            result = self._graph.invoke(
+                Command(resume=human_response),
+                config=config,
+            )
+            return result
+        except Exception:
+            logger.exception("langgraph_resume_failed workflow=%s", workflow_id)
+            raise
+
+    def get_state(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+        """Return the current checkpoint state for a workflow thread."""
+        try:
+            config = {"configurable": {"thread_id": str(workflow_id)}}
+            snapshot = self._graph.get_state(config)
+            return dict(snapshot.values) if snapshot else None
+        except Exception:
+            logger.exception("langgraph_get_state_failed workflow=%s", workflow_id)
+            return None
+
+
+# ---------------------------------------------------------------------------
+# SimpleGraph fallback (used when langgraph is not installed)
+# ---------------------------------------------------------------------------
+
+class SimpleGraph:
+    """
+    Synchronous, deterministic fallback that replicates the LangGraph
+    node execution order without requiring the langgraph package.
+    Used for development environments or when langgraph is unavailable.
+    """
+
+    def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        workflow_id = state.get("workflow_id")
+        repository = state.get("repository", "unknown/repo")
+        pr_number = state.get("pr_number", 0)
+
+        current = {
+            "workflow_id": workflow_id,
+            "repository": repository,
+            "pr_number": pr_number,
+            "findings": [],
+            "challenges": [],
+            "agent_logs": [],
+            "qa_summary": "",
+            "risk_level": "LOW",
+            "decision": "",
+            "rationale": "",
+            "human_decision": None,
+            "human_reason": None,
+            "_fid": 1,
+        }
+
+        # Run each node in order, merging returned partial state
+        for node_fn in [
+            planner_node,
+            backend_node,
+            frontend_node,
+            security_node,
+            sre_node,
+            challenger_node,
+            qa_lead_node,
+            judge_node,
+        ]:
+            partial = node_fn(current)
+            # Merge: append lists, overwrite scalars
+            for k, v in partial.items():
+                if isinstance(v, list) and isinstance(current.get(k), list):
+                    current[k] = current[k] + v
+                else:
+                    current[k] = v
+
+        return current

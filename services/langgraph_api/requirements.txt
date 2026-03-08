@@ -1,10 +1,38 @@
-fastapi
-uvicorn
-pydantic
-sqlalchemy
-asyncpg
-langgraph
-langchain-core
-psycopg2-binary
-httpx
-respx
+# Core web framework
+fastapi>=0.111.0
+uvicorn>=0.30.0
+httpx>=0.27.0
+
+# Pydantic
+pydantic>=2.7.0
+
+# Database
+sqlalchemy>=2.0.0
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
+alembic>=1.13.0
+
+# LangGraph orchestration (pinned for stability)
+# LangGraph >=0.2.0 introduced StateGraph, interrupt(), MemorySaver, Command
+langgraph>=0.2.0
+langchain-core>=0.2.0
+
+# LLM client
+httpx>=0.27.0
+pyyaml>=6.0.0
+
+# Auth / JWT (for demo app)
+passlib[bcrypt]>=1.7.4
+python-jose>=3.3.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+respx>=0.21.0
+
+# Playwright (for frontend agent)
+playwright>=1.44.0
+pytest-playwright>=0.5.0
+
+# Performance
+psutil>=5.9.0

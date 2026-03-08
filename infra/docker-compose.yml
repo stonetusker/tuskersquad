@@ -16,6 +16,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - tuskersquad-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tusker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 
   gitea:
@@ -31,6 +36,28 @@ services:
       - tuskersquad-network
 
 
+  # Demo e-commerce application (target under test)
+  demo-backend:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.langgraph
+    container_name: tuskersquad-demo-backend
+    command: uvicorn apps.backend.main:app --host 0.0.0.0 --port 8080
+    environment:
+      BUG_PRICE: "${BUG_PRICE:-false}"
+      BUG_SECURITY: "${BUG_SECURITY:-false}"
+      BUG_SLOW: "${BUG_SLOW:-false}"
+    ports:
+      - "8080:8080"
+    networks:
+      - tuskersquad-network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
   langgraph-api:
     build:
       context: ..
@@ -43,10 +70,22 @@ services:
       POSTGRES_DB: tuskersquad
       POSTGRES_HOST: tuskersquad-postgres
       POSTGRES_PORT: 5432
+      # Demo app URL for real agent runners
+      DEMO_APP_URL: http://tuskersquad-demo-backend:8080
+      DEMO_FRONTEND_URL: http://tuskersquad-frontend:5173
+      # Gitea
+      GITEA_URL: http://tuskersquad-gitea:3000
+      GITEA_TOKEN: "${GITEA_TOKEN:-}"
+      # Latency thresholds
+      LATENCY_THRESHOLD_MS: "500"
+      SRE_REQUEST_COUNT: "10"
     ports:
       - "8000:8000"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      demo-backend:
+        condition: service_healthy
     networks:
       - tuskersquad-network
 
@@ -67,11 +106,18 @@ services:
       LANGGRAPH_URL: http://langgraph-api:8000
       GITEA_URL: http://tuskersquad-gitea:3000
       GITEA_TOKEN: "${GITEA_TOKEN:-}"
+      # Optional integrations
+      JIRA_URL: "${JIRA_URL:-}"
+      JIRA_TOKEN: "${JIRA_TOKEN:-}"
+      JIRA_PROJECT: "${JIRA_PROJECT:-TUSKER}"
+      SLACK_WEBHOOK_URL: "${SLACK_WEBHOOK_URL:-}"
     ports:
       - "8001:8001"
     depends_on:
-      - postgres
-      - langgraph-api
+      postgres:
+        condition: service_healthy
+      langgraph-api:
+        condition: service_started
     networks:
       - tuskersquad-network
 
@@ -81,6 +127,7 @@ services:
       context: ..
       dockerfile: infra/Dockerfile.langgraph
     container_name: tuskersquad-dashboard
+    command: uvicorn services.dashboard.main:app --host 0.0.0.0 --port 8501
     environment:
       POSTGRES_USER: tusker
       POSTGRES_PASSWORD: tusker
@@ -90,12 +137,13 @@ services:
       LANGGRAPH_URL: http://langgraph-api:8000
       GITEA_URL: http://tuskersquad-gitea:3000
       GITEA_TOKEN: "${GITEA_TOKEN:-}"
-    command: uvicorn services.dashboard.main:app --host 0.0.0.0 --port 8501
     ports:
       - "8501:8501"
     depends_on:
-      - postgres
-      - langgraph-api
+      postgres:
+        condition: service_healthy
+      langgraph-api:
+        condition: service_started
     networks:
       - tuskersquad-network
 
@@ -108,12 +156,9 @@ services:
       - ..:/app:cached
       - frontend_node_modules:/app/apps/frontend/node_modules
     environment:
-      # Use host-accessible addresses so the browser (on host) can reach the APIs
       VITE_DASH_URL: http://localhost:8501
       VITE_INTEGRATION_URL: http://localhost:8001
-      # Prevent Playwright from downloading browser binaries inside the container
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
-      # Force non-interactive installs
       CI: '1'
     command: sh -c "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173"
     ports:

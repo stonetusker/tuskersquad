@@ -95,3 +95,19 @@ class FindingChallenge(Base):
     decision = Column(String)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class QASummary(Base):
+    """Stores the QA Lead's standup summary and risk assessment per workflow."""
+
+    __tablename__ = "qa_summaries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"))
+
+    risk_level = Column(String)  # LOW / MEDIUM / HIGH
+
+    summary = Column(Text)
+
+    created_at = Column(DateTime, default=datetime.utcnow)

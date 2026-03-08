@@ -14,9 +14,17 @@ security_engineer:
   model: qwen2.5:14b
   type: reasoning
 
+sre_engineer:
+  model: qwen2.5:14b
+  type: reasoning
+
 challenger:
   model: qwen2.5:14b
   type: reasoning
+
+qa_lead:
+  model: phi3:mini
+  type: summary
 
 judge:
   model: qwen2.5:14b
