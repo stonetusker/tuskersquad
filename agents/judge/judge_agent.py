@@ -10,23 +10,25 @@ Makes the final deployment decision based on:
 Decision values: APPROVE | REJECT | REVIEW_REQUIRED
 """
 
+import asyncio
 import os
 
+
 def _run_async(coro):
-    """Run coroutine safely from background thread or async context."""
+    """Run a coroutine safely from a background thread."""
     try:
         loop = asyncio.get_event_loop()
         if loop.is_closed():
-            raise RuntimeError("closed")
+            return asyncio.run(coro)
         if loop.is_running():
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 return pool.submit(asyncio.run, coro).result(timeout=30)
         return loop.run_until_complete(coro)
     except RuntimeError:
-        return _run_async(coro)
+        return asyncio.run(coro)
 
-import asyncio
+
 import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional

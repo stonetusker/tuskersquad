@@ -33,6 +33,9 @@ class WorkflowRepository:
             .first()
         )
 
+        if workflow is None:
+            return None
+
         workflow.status = status
         workflow.updated_at = datetime.utcnow()
 

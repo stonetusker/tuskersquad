@@ -34,10 +34,10 @@ export default function WorkflowDetail({ workflowId }) {
       try {
         const [d, a, f, g, q] = await Promise.all([
           api.getWorkflow(workflowId),
-          api.getAgents(workflowId),
-          api.getFindings(workflowId),
-          api.getGovernance(workflowId),
-          api.getQASummary(workflowId),
+          api.getAgents(workflowId).catch(() => []),
+          api.getFindings(workflowId).catch(() => []),
+          api.getGovernance(workflowId).catch(() => ({ actions: [], rationale: null })),
+          api.getQASummary(workflowId).catch(() => null),
         ])
         if (mounted) {
           setDetail(d)
@@ -46,7 +46,7 @@ export default function WorkflowDetail({ workflowId }) {
           setGov(g)
           setQa(q)
         }
-      } catch (e) { console.error(e) }
+      } catch (e) { console.error('WorkflowDetail load error:', e) }
     }
 
     load()

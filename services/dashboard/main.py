@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 async def list_workflows():
     """Return a merged list of workflows.
 
-    We prefer the persistent DB listing (`/api/api/workflows`) but also
+    We prefer the persistent DB listing (`/api/workflows`) but also
     include in-memory running workflows from `/api/workflows` so the UI can
     show workflows that are active but not yet fully persisted/updated.
     """
@@ -48,12 +48,12 @@ async def list_workflows():
         return []
 
     async with httpx.AsyncClient() as client:
-        db_list = await fetch_json_with_retries(client, f"{LANGGRAPH_URL}/api/api/workflows")
+        db_list = await fetch_json_with_retries(client, f"{LANGGRAPH_URL}/api/workflows")
 
         for w in db_list:
             results[str(w.get("workflow_id"))] = w
 
-        mem_list = await fetch_json_with_retries(client, f"{LANGGRAPH_URL}/api/workflows")
+        mem_list = await fetch_json_with_retries(client, f"{LANGGRAPH_URL}/api/workflows/live")
 
         for m in mem_list:
             wid = str(m.get("workflow_id"))

@@ -1,38 +1,73 @@
-build:
-	docker compose -f infra/docker-compose.yml up --build -d
+# TuskerSquad Makefile
+# =====================
+# Run from the project root (one level above infra/)
 
-down:
-	docker compose -f infra/docker-compose.yml down
+COMPOSE = docker compose -f infra/docker-compose.yml
 
-shell:
-	docker exec -it tuskersquad-langgraph bash
+.PHONY: up down restart clean logs ps build demo-bugs-on demo-bugs-off fresh
 
-ollama-test:
-	docker exec -it tuskersquad-langgraph python scripts/check_ollama.py
+## Start all services (build if needed)
+up:
+	$(COMPOSE) up --build -d
 
+## Attach to logs
 logs:
-	docker logs -f tuskersquad-langgraph
+	$(COMPOSE) logs -f
 
-logs-all:
-	docker compose -f infra/docker-compose.yml logs -f
+## Logs for a specific service: make logs-svc SVC=langgraph-api
+logs-svc:
+	$(COMPOSE) logs -f $(SVC)
 
+## Show running containers
 ps:
-	docker compose -f infra/docker-compose.yml ps
+	$(COMPOSE) ps
 
-test-unit:
-	PYTHONPATH=$(PWD):$(PWD)/services/langgraph_api pytest -q tests/unit
+## Stop all services (keep volumes)
+down:
+	$(COMPOSE) down
 
-test-e2e:
-	pytest -q tests/integration/test_week6_e2e.py
+## Stop all services AND remove volumes (full reset — re-creates DB on next up)
+clean:
+	@echo "WARNING: This removes all data volumes including the database!"
+	$(COMPOSE) down -v --remove-orphans
 
-demo-mode:
-	cd apps/frontend && VITE_USE_DEMO=true npm run dev
+## Full clean rebuild: wipe volumes, rebuild images, start fresh
+fresh: clean
+	$(COMPOSE) up --build -d
+	@echo "Fresh start complete — services starting at:"
+	@echo "  Frontend:    http://localhost:5173"
+	@echo "  Dashboard:   http://localhost:8501"
+	@echo "  LangGraph:   http://localhost:8000"
+	@echo "  Integration: http://localhost:8001"
 
-warm-models:
-	python scripts/warm_models.py
-
+## Enable demo bugs
 demo-bugs-on:
-	BUG_PRICE=true BUG_SLOW=true BUG_SECURITY=true docker compose -f infra/docker-compose.yml up -d demo-backend
+	BUG_PRICE=true BUG_SLOW=true BUG_SECURITY=true $(COMPOSE) up -d demo-backend
 
+## Disable demo bugs
 demo-bugs-off:
-	docker compose -f infra/docker-compose.yml up -d demo-backend
+	BUG_PRICE=false BUG_SLOW=false BUG_SECURITY=false $(COMPOSE) up -d demo-backend
+
+## Restart just the langgraph service
+restart-api:
+	$(COMPOSE) restart langgraph-api
+
+## Restart just the dashboard
+restart-dash:
+	$(COMPOSE) restart dashboard
+
+## Restart just the demo backend
+restart-demo:
+	$(COMPOSE) restart demo-backend
+
+## View logs for all backend services
+logs-all:
+	$(COMPOSE) logs -f langgraph-api dashboard integration-service demo-backend
+
+## Run unit tests (outside Docker)
+test-unit:
+	PYTHONPATH=. pytest tests/unit/ -v
+
+## Run integration tests (outside Docker, services must be running)
+test-integration:
+	PYTHONPATH=. pytest tests/integration/ -v

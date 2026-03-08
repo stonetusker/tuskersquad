@@ -77,6 +77,8 @@ class AgentExecutionLog(Base):
 
     completed_at = Column(DateTime)
 
+    output = Column(Text, nullable=True)
+
 
 class FindingChallenge(Base):
 

@@ -51,34 +51,34 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import asyncio
+
+try:
+    from ..core.workflow_registry import workflow_registry as _registry
+except ImportError:
+    _registry = None
+
 logger = logging.getLogger("langgraph.graph_builder")
 
-# ---------------------------------------------------------------------------
-# Semaphore: limit concurrent heavy LLM calls (plan spec: max 5)
-# ---------------------------------------------------------------------------
 
 def _run_async(coro):
     """
-    Run a coroutine safely from any context (thread or main).
-    Background threads (execute_workflow) have no running loop,
-    so asyncio.run() works fine there. This helper handles both cases.
+    Run a coroutine safely from any thread context.
+    Background threads (execute_workflow) never have a running event loop,
+    so asyncio.run() always works there. This helper also handles the rare
+    case where someone calls a node function from an async context.
     """
     try:
         loop = asyncio.get_event_loop()
         if loop.is_closed():
-            raise RuntimeError("loop closed")
+            return asyncio.run(coro)
         if loop.is_running():
-            # We're inside an async context — schedule and wait
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                f = pool.submit(asyncio.run, coro)
-                return f.result(timeout=30)
+                return pool.submit(asyncio.run, coro).result(timeout=30)
         return loop.run_until_complete(coro)
     except RuntimeError:
         return asyncio.run(coro)
-
-import asyncio as _asyncio
-_LLM_SEMAPHORE = _asyncio.Semaphore(5)
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,6 @@ def _llm_finding_or_synthetic(
 
     if os.getenv("OLLAMA_URL"):
         try:
-            import asyncio
             from core.llm_client import LLMClient
 
             llm = LLMClient()
@@ -214,6 +213,13 @@ def _run_eng_agent(
 
     findings: List[Dict[str, Any]] = []
     start = datetime.utcnow()
+
+    # Update registry so UI shows live agent progress
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": agent_name})
+    except Exception:
+        pass
 
     runner = _import_runner(module_path, fn_name)
     if runner:
@@ -413,7 +419,6 @@ def judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
             }
     else:
         # Inline fallback
-        import asyncio
         if os.getenv("OLLAMA_URL"):
             try:
                 from core.llm_client import LLMClient
