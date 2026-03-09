@@ -134,60 +134,58 @@ class LLMClient:
         success        = False
         exc_to_raise   = None
 
-        async with self.semaphore:
-            logger.info("llm_request agent=%s model=%s wf=%s", agent_name, model_name, workflow_id)
-            try:
-                async with httpx.AsyncClient(timeout=120) as client:
-                    r = await client.post(
-                        f"{OLLAMA_URL}/api/generate",
-                        json={
-                            "model":       model_name,
-                            "prompt":      prompt,
-                            "temperature": temperature,
-                            "stream":      False,
-                        },
+        try:
+            async with self.semaphore:
+                logger.info("llm_request agent=%s model=%s wf=%s", agent_name, model_name, workflow_id)
+                try:
+                    async with httpx.AsyncClient(timeout=120) as client:
+                        r = await client.post(
+                            f"{OLLAMA_URL}/api/generate",
+                            json={
+                                "model":       model_name,
+                                "prompt":      prompt,
+                                "temperature": temperature,
+                                "stream":      False,
+                            },
+                        )
+                        r.raise_for_status()
+                        response_text = r.json().get("response", "")
+                        success = True
+                        logger.info("llm_response agent=%s chars=%d", agent_name, len(response_text))
+                except BaseException as exc:
+                    # Catch BaseException (includes CancelledError from asyncio.wait_for timeout)
+                    error_text   = str(exc)
+                    exc_to_raise = exc
+                    logger.warning("llm_failed agent=%s model=%s err=%s", agent_name, model_name, exc)
+        finally:
+            # Always write logs — even if cancelled by asyncio.wait_for timeout
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            record = {
+                "ts":          datetime.utcnow().isoformat(),
+                "workflow_id": workflow_id,
+                "agent":       agent_name,
+                "model":       model_name,
+                "duration_ms": duration_ms,
+                "success":     success,
+                "prompt":      prompt[:2000],
+                "response":    response_text,
+                "error":       error_text,
+            }
+            _log_to_file(record)
+            if self._db_log_callback:
+                try:
+                    self._db_log_callback(
+                        workflow_id=workflow_id,
+                        agent=agent_name,
+                        model=model_name,
+                        prompt=prompt,
+                        response=response_text,
+                        duration_ms=duration_ms,
+                        success=success,
+                        error=error_text,
                     )
-                    r.raise_for_status()
-                    response_text = r.json().get("response", "")
-                    success = True
-                    logger.info("llm_response agent=%s chars=%d", agent_name, len(response_text))
-            except Exception as exc:
-                error_text   = str(exc)
-                exc_to_raise = exc
-                logger.warning("llm_failed agent=%s model=%s err=%s", agent_name, model_name, exc)
-
-        duration_ms = int((time.monotonic() - t0) * 1000)
-
-        # ── Write logs BEFORE potentially raising ─────────────────────────────
-        # Previous version raised BEFORE writing logs — failed calls were never
-        # recorded. Now we always write, then re-raise if there was an error.
-        record = {
-            "ts":          datetime.utcnow().isoformat(),
-            "workflow_id": workflow_id,
-            "agent":       agent_name,
-            "model":       model_name,
-            "duration_ms": duration_ms,
-            "success":     success,
-            "prompt":      prompt[:2000],   # truncate huge prompts in file log
-            "response":    response_text,
-            "error":       error_text,
-        }
-        _log_to_file(record)
-
-        if self._db_log_callback:
-            try:
-                self._db_log_callback(
-                    workflow_id=workflow_id,
-                    agent=agent_name,
-                    model=model_name,
-                    prompt=prompt,
-                    response=response_text,
-                    duration_ms=duration_ms,
-                    success=success,
-                    error=error_text,
-                )
-            except Exception:
-                logger.debug("llm_db_log_callback_failed")
+                except Exception:
+                    logger.debug("llm_db_log_callback_failed")
 
         if exc_to_raise is not None:
             raise exc_to_raise

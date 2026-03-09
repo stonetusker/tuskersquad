@@ -145,6 +145,12 @@ async def get_merge_status(workflow_id: str):
 
 # ── Governance POST actions ───────────────────────────────────────────────────
 
+
+@app.get("/api/ui/gitea/info")
+async def gitea_info():
+    """Proxy to langgraph /api/gitea/info — returns Gitea user + repo list."""
+    return await _get(f"{LANGGRAPH_URL}/api/gitea/info")
+
 @app.post("/api/ui/workflow/{workflow_id}/approve")
 async def approve_workflow(workflow_id: str):
     return await _post_proxy(f"{LANGGRAPH_URL}/api/workflow/{workflow_id}/approve")

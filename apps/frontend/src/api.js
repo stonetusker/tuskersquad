@@ -58,6 +58,9 @@ const api = {
       body: JSON.stringify({ decision, reason }),
     }),
 
+  // ── Gitea integration info ────────────────────────────────────────────
+  getGiteaInfo: () => request('/api/ui/gitea/info'),
+
   // ── Trigger workflow via integration service ───────────────────────
   simulateWebhook: (payload) =>
     request('/webhook/simulate', {

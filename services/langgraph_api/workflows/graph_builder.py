@@ -132,7 +132,7 @@ def _llm_finding_or_synthetic(
 
             try:
                 resp = _run_async(
-                    asyncio.wait_for(llm.generate(model_agent, prompt), timeout=5)
+                    asyncio.wait_for(llm.generate(model_agent, prompt), timeout=90)
                 )
             except asyncio.TimeoutError:
                 logger.warning("llm_agent_timeout agent=%s", agent)

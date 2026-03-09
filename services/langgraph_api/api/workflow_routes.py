@@ -12,6 +12,8 @@ import threading
 import uuid
 from typing import Optional
 
+import httpx
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -561,3 +563,63 @@ def _post_governance_comment(
         post_pr_comment_sync(wf.repository, wf.pr_number, body)
     except Exception:
         logger.debug("governance_comment_failed workflow=%s", workflow_id)
+
+
+# ─── Gitea runtime info ───────────────────────────────────────────────────────
+
+@router.get("/gitea/info")
+async def gitea_info():
+    """
+    Return the authenticated Gitea user and their repositories.
+    Used by the frontend to populate the repo picker — avoids hardcoding owner names.
+    Returns { user: "...", repos: ["owner/repo", ...], error: null }
+    """
+    import os
+    gitea_url = os.getenv("GITEA_URL", "").rstrip("/")
+    token     = os.getenv("GITEA_TOKEN", "")
+
+    result = {"user": None, "repos": [], "error": None,
+              "gitea_url": gitea_url or None}
+
+    if not gitea_url or not token:
+        result["error"] = "GITEA_URL or GITEA_TOKEN not configured"
+        return result
+
+    headers = {"Authorization": f"token {token}", "Content-Type": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            # Get authenticated user
+            ur = await client.get(f"{gitea_url}/api/v1/user", headers=headers)
+            if ur.status_code != 200:
+                result["error"] = f"Gitea /user returned {ur.status_code}: {ur.text[:200]}"
+                return result
+            user_data = ur.json()
+            username  = user_data.get("login", "")
+            result["user"] = username
+
+            # Get repos accessible by this token (limit 50)
+            rr = await client.get(
+                f"{gitea_url}/api/v1/repos/search",
+                headers=headers,
+                params={"token": token, "limit": 50, "sort": "newest"},
+            )
+            if rr.status_code == 200:
+                repos = rr.json().get("data", [])
+                result["repos"] = [r["full_name"] for r in repos]
+            else:
+                # Fallback: just list repos owned by the user
+                or_ = await client.get(
+                    f"{gitea_url}/api/v1/user/repos",
+                    headers=headers,
+                    params={"limit": 50},
+                )
+                if or_.status_code == 200:
+                    result["repos"] = [r["full_name"] for r in or_.json()]
+
+    except httpx.ConnectError:
+        result["error"] = f"Cannot connect to Gitea at {gitea_url}"
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    return result
