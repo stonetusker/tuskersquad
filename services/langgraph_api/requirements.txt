@@ -13,22 +13,29 @@ sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
 alembic==1.13.3
 
-# ── Auth / Crypto (used by demo probes and JWT validation) ────────────────────
+# ── Auth / Crypto ─────────────────────────────────────────────────────────────
 bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
-cryptography==42.0.8
+# Allow pip to pick a compatible cffi version for the target architecture.
+# Pinning cryptography==42.0.8 caused cffi 2.0.0 to be selected on aarch64
+# which fails to build. The range below keeps security parity while letting
+# pip resolve cffi correctly on x86_64, arm64, and Apple Silicon.
+cryptography>=42.0.0,<44.0.0
 
-# ── LangGraph ─────────────────────────────────────────────────────────────────
-langgraph==0.2.59
-langchain-core==0.3.21
+# ── LangGraph + LangChain ─────────────────────────────────────────────────────
+# IMPORTANT: langgraph 0.2.x explicitly excludes langchain-core 0.3.0–0.3.22
+# (those were yanked releases with breaking bugs). Using langchain-core==0.3.21
+# causes an irreconcilable conflict. langchain-core>=0.3.23 is required.
+langgraph>=0.2.28,<0.3.0
+langchain-core>=0.3.23,<0.4.0
 
-# ── Config ───────────────────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 pyyaml==6.0.2
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
 psutil==6.1.0
 
-# ── Testing (only used when running tests inside the container) ───────────────
+# ── Testing (available inside container for make test) ────────────────────────
 pytest==8.3.4
 pytest-asyncio==0.24.0
 respx==0.21.1

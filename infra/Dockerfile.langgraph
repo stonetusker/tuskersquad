@@ -2,26 +2,27 @@
 FROM python:3.11-slim
 
 # System deps:
-#   gcc, libffi-dev  → bcrypt / cryptography wheels
-#   libpq-dev        → psycopg2-binary fallback headers
-#   curl             → useful for manual healthchecks
+#   gcc, libffi-dev  → needed to compile bcrypt / cryptography C extensions
+#   libpq-dev        → psycopg2-binary may need headers on some platforms
+#   curl             → useful for manual container healthchecks
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libffi-dev libpq-dev vim curl \
+ && apt-get install -y --no-install-recommends gcc libffi-dev libpq-dev curl \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 1. Upgrade pip
+# 1. Upgrade pip (pinned version — avoids pip resolver regressions)
 RUN pip install --no-cache-dir --upgrade pip==24.3.1
 
-# 2. Install Python deps (cached layer)
+# 2. Install Python deps first (cached layer — only rebuilds when requirements change)
 COPY services/langgraph_api/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# 3. Copy ALL source (PYTHONPATH=/app exposes agents/, core/, services/, config/)
+# 3. Copy all source code
+#    PYTHONPATH=/app means: agents/, core/, services/, config/ are all importable
 COPY . /app
 
-# Create log dir (also created at runtime, but good to have for volume mount)
+# 4. Ensure log directory exists for LLM conversation logging volume mount
 RUN mkdir -p /app/logs
 
 ENV PYTHONPATH=/app
