@@ -251,15 +251,21 @@ def execute_workflow(workflow_id: str) -> None:
                 "current_agent": None,
             })
 
-        # Wire LLM client's DB callback so every LLM call is persisted
+        # Wire LLM client's DB callback so every LLM call is persisted.
+        # IMPORTANT: callback opens its OWN session — never share the execute_workflow
+        # session across threads (SQLAlchemy sessions are not thread-safe).
         try:
             from core.llm_client import get_llm_client
             _llm_instance = get_llm_client()
             def _db_log(workflow_id=workflow_id, **kwargs):
                 try:
-                    llm_repo.log_conversation(workflow_id=workflow_id, **kwargs)
-                except Exception:
-                    pass
+                    _cb_db = SessionLocal()
+                    try:
+                        LLMLogRepository(_cb_db).log_conversation(workflow_id=workflow_id, **kwargs)
+                    finally:
+                        _cb_db.close()
+                except Exception as _e:
+                    logger.warning("llm_db_log_failed: %s", _e)
             _llm_instance.set_db_log_callback(_db_log)
         except Exception:
             pass  # LLM logging is best-effort
@@ -302,17 +308,15 @@ def execute_workflow(workflow_id: str) -> None:
             wf_repo.update_workflow_status(workflow_id, "COMPLETED")
             _update_registry(workflow_id, "COMPLETED", rationale, qa_summary, risk_level)
             logger.info("auto_decision workflow=%s decision=%s", workflow_id, decision)
-            _post_agent_pr_comments(db, workflow_id, result, f_repo, agent_decisions)
-            _post_initial_pr_comment(db, workflow_id, result, f_repo, qa_summary,
-                                     risk_level, agent_decisions)
+            _post_agent_pr_comments(workflow_id, agent_decisions)
+            _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_decisions)
             return
 
         wf_repo.update_workflow_status(workflow_id, "WAITING_HUMAN_APPROVAL")
         _update_registry(workflow_id, "WAITING_HUMAN_APPROVAL", rationale, qa_summary, risk_level,
                          extra={"agent_decisions": agent_decisions})
-        _post_agent_pr_comments(db, workflow_id, result, f_repo, agent_decisions)
-        _post_initial_pr_comment(db, workflow_id, result, f_repo, qa_summary,
-                                 risk_level, agent_decisions)
+        _post_agent_pr_comments(workflow_id, agent_decisions)
+        _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_decisions)
 
     except Exception:
         logger.exception("execute_workflow_failed workflow=%s", workflow_id)
@@ -386,20 +390,19 @@ _PIPELINE_ORDER = ["planner", "backend", "frontend", "security",
                    "sre", "challenger", "qa_lead", "judge"]
 
 
-def _post_agent_pr_comments(
-    db, workflow_id: str, result: dict,
-    findings_repo, agent_decisions: dict,
-) -> None:
+def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
     """
-    Post one PR comment per agent immediately after the pipeline completes.
-    Gives the PR author a clear per-agent breakdown rather than one huge blob.
+    Post one PR comment per agent after the pipeline completes.
+    Opens its own DB session — safe to call from any thread.
     """
+    db = SessionLocal()
     try:
         wf = WorkflowRepository(db).get_workflow(workflow_id)
         if not (wf and wf.repository and wf.pr_number):
+            logger.warning("post_agent_comments_skip: workflow %s has no repo/pr", workflow_id)
             return
 
-        all_findings = findings_repo.list_by_workflow(workflow_id)
+        all_findings = FindingsRepository(db).list_by_workflow(workflow_id)
         findings_by_agent: dict = {}
         for f in all_findings:
             findings_by_agent.setdefault(f.agent, []).append(f)
@@ -439,23 +442,23 @@ def _post_agent_pr_comments(
             lines += ["", "---", "*TuskerSquad · Stonetusker Systems*"]
             body = "\n".join(lines)
 
-            try:
-                post_pr_comment_sync(wf.repository, wf.pr_number, body)
-                logger.info("agent_comment_posted agent=%s workflow=%s", agent, workflow_id)
-            except Exception:
-                logger.exception("agent_comment_failed agent=%s workflow=%s", agent, workflow_id)
+            post_pr_comment_sync(wf.repository, wf.pr_number, body)
+            logger.info("agent_comment_posted agent=%s repo=%s pr=%s", agent, wf.repository, wf.pr_number)
 
     except Exception:
         logger.exception("post_agent_pr_comments_failed workflow=%s", workflow_id)
+    finally:
+        db.close()
 
-def _post_initial_pr_comment(db, workflow_id, result, findings_repo,
-                              qa_summary, risk_level, agent_decisions):
-    """Post the rich per-agent transparency comment to the PR."""
+def _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_decisions):
+    """Post the final consolidated review comment. Opens its own DB session."""
+    db = SessionLocal()
     try:
         wf = WorkflowRepository(db).get_workflow(workflow_id)
         if not (wf and wf.repository and wf.pr_number):
+            logger.warning("post_initial_comment_skip: workflow %s has no repo/pr", workflow_id)
             return
-        rows    = findings_repo.list_by_workflow(workflow_id)
+        rows    = FindingsRepository(db).list_by_workflow(workflow_id)
         payload = [{"agent": f.agent, "title": f.title, "severity": f.severity,
                     "description": f.description} for f in rows]
         body = build_initial_review_comment(
@@ -468,5 +471,9 @@ def _post_initial_pr_comment(db, workflow_id, result, findings_repo,
             agent_decisions=agent_decisions,
         )
         post_pr_comment_sync(wf.repository, wf.pr_number, body)
+        logger.info("initial_pr_comment_posted workflow=%s repo=%s pr=%s",
+                    workflow_id, wf.repository, wf.pr_number)
     except Exception:
         logger.exception("initial_pr_comment_failed workflow=%s", workflow_id)
+    finally:
+        db.close()
