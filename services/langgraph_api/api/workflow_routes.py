@@ -602,7 +602,7 @@ async def gitea_info():
             rr = await client.get(
                 f"{gitea_url}/api/v1/repos/search",
                 headers=headers,
-                params={"token": token, "limit": 50, "sort": "newest"},
+                params={"limit": 50, "sort": "newest"},
             )
             if rr.status_code == 200:
                 repos = rr.json().get("data", [])

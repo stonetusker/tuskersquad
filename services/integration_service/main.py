@@ -33,6 +33,21 @@ logging.basicConfig(
 logger = logging.getLogger("integration_service")
 
 app = FastAPI(title="TuskerSquad Integration Service", version="1.0.0")
+
+@app.on_event("startup")
+async def _startup_log():
+    logger.info("=" * 60)
+    logger.info("TuskerSquad Integration Service starting")
+    logger.info("Webhook endpoint : POST /gitea/webhook")
+    logger.info("Gitea config     : GITEA_URL=%s token_set=%s secret_set=%s",
+                GITEA_URL, bool(GITEA_TOKEN), bool(GITEA_WEBHOOK_SECRET))
+    logger.info("LangGraph URL    : %s", LANGGRAPH_URL)
+    logger.info("Trigger actions  : %s", TRIGGER_ACTIONS)
+    logger.info("")
+    logger.info("IMPORTANT — set Gitea webhook URL to:")
+    logger.info("  http://tuskersquad-integration:8001/gitea/webhook")
+    logger.info("  (NOT localhost — use the container name)")
+    logger.info("=" * 60)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -47,7 +62,7 @@ GITEA_TOKEN          = os.getenv("GITEA_TOKEN",          "")
 GITEA_WEBHOOK_SECRET = os.getenv("GITEA_WEBHOOK_SECRET", "")
 
 # Only these Gitea PR actions start a new review
-TRIGGER_ACTIONS = {"opened", "synchronize", "reopened"}
+TRIGGER_ACTIONS = {"opened", "synchronize", "reopened", "created", "reopen"}
 
 
 # ── HMAC signature validation ─────────────────────────────────────────────────
@@ -291,3 +306,58 @@ async def simulate_webhook(request: Request):
     except Exception as exc:
         logger.exception("simulate_start_failed")
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/webhook/debug")
+async def webhook_debug():
+    """Debug endpoint - returns integration service config (no secrets)."""
+    return {
+        "langgraph_url": LANGGRAPH_URL,
+        "gitea_url": GITEA_URL,
+        "gitea_token_set": bool(GITEA_TOKEN),
+        "webhook_secret_set": bool(GITEA_WEBHOOK_SECRET),
+        "trigger_actions": list(TRIGGER_ACTIONS),
+        "webhook_endpoint": "POST /gitea/webhook",
+        "test_url": "POST /webhook/simulate  body: {repo: owner/repo, pr_number: 1}",
+    }
+
+
+@app.post("/webhook/test-parse")
+async def test_parse(request: Request):
+    """
+    Send any JSON payload here to see how integration-service would parse it.
+    Useful for debugging Gitea webhook payloads without triggering a real workflow.
+    """
+    try:
+        import json as _json
+        payload = _json.loads(await request.body())
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+
+    event = request.headers.get("X-Gitea-Event", "(header not set)")
+    sig   = request.headers.get("X-Gitea-Signature", "(header not set)")
+    repository, pr_number, action = _parse_gitea_pr_payload(payload)
+
+    would_trigger = (
+        (not event or event == "pull_request" or event == "(header not set)")
+        and (not action or action in TRIGGER_ACTIONS)
+        and bool(repository)
+        and pr_number is not None
+    )
+
+    return {
+        "received_event_header":    event,
+        "received_signature_header": sig,
+        "parsed_repository":        repository,
+        "parsed_pr_number":         pr_number,
+        "parsed_action":            action,
+        "would_trigger_workflow":   would_trigger,
+        "trigger_actions":          list(TRIGGER_ACTIONS),
+        "skip_reason": (
+            None if would_trigger else
+            f"action '{action}' not in {TRIGGER_ACTIONS}" if action and action not in TRIGGER_ACTIONS else
+            f"event '{event}' is not pull_request" if event not in ("pull_request", "(header not set)", "") else
+            "missing repository or pr_number"
+        ),
+    }
+
