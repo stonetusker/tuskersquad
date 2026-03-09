@@ -121,6 +121,8 @@ services:
       SRE_REQUEST_COUNT:    "10"
     ports:
       - "8000:8000"
+    volumes:
+      - tuskersquad_logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -206,3 +208,4 @@ networks:
 volumes:
   postgres_data:
   gitea_data:
+  tuskersquad_logs:

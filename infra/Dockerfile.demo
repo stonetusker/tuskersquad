@@ -1,21 +1,24 @@
 FROM python:3.11-slim
 
+# System deps needed for bcrypt (cffi/gcc)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libffi-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Copy and install only demo-backend requirements (fast build)
+# Install Python deps first (layer caching)
 COPY apps/backend/requirements.txt /tmp/demo-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/demo-requirements.txt
 
-
-# Install system deps needed by psycopg2-binary and compilation
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl vim \
-    && rm -rf /var/lib/apt/lists/*
-
-
-# Copy full project (needed for absolute imports like apps.backend.*)
+# Copy full project (changes most often - last layer)
 COPY . /app
 
 ENV PYTHONPATH=/app
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=4)"
 
 CMD ["uvicorn", "apps.backend.main:app", "--host", "0.0.0.0", "--port", "8080"]

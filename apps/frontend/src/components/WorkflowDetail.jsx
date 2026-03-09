@@ -5,6 +5,8 @@ import AgentsTimeline from './AgentsTimeline'
 import AgentGraph from './AgentGraph'
 import RiskHeatmap from './RiskHeatmap'
 import LLMReasoningViewer from './LLMReasoningViewer'
+import LLMLogsViewer from './LLMLogsViewer'
+import AgentDecisionPanel from './AgentDecisionPanel'
 
 const DASH_BASE = import.meta.env.VITE_DASH_URL || 'http://localhost:8501'
 
@@ -71,7 +73,7 @@ export default function WorkflowDetail({ workflowId }) {
   const [actionMsg,    setActionMsg]    = useState(null)
   const [releaseReason,setReleaseReason]= useState('')
   const [showRelease,  setShowRelease]  = useState(false)
-  const [activeTab,    setActiveTab]    = useState('graph') // graph | timeline | heatmap | reasoning
+  const [activeTab,    setActiveTab]    = useState('decisions') // decisions | graph | timeline | heatmap | reasoning | llmlogs
 
   const isWaiting  = detail?.status === 'WAITING_HUMAN_APPROVAL'
   const isRunning  = detail?.status === 'RUNNING'
@@ -158,10 +160,12 @@ export default function WorkflowDetail({ workflowId }) {
   const dc = DEPLOY_CFG[deployStatus]
 
   const TABS = [
-    { id: 'graph',     label: '🔗 Agent Graph' },
-    { id: 'timeline',  label: '⏱ Timeline' },
-    { id: 'heatmap',   label: '🌡 Risk Heatmap' },
-    { id: 'reasoning', label: '🧠 LLM Reasoning' },
+    { id: 'decisions', label: '🏛 Agent Decisions' },
+    { id: 'graph',     label: '🔗 Agent Graph'    },
+    { id: 'timeline',  label: '⏱ Timeline'        },
+    { id: 'heatmap',   label: '🌡 Risk Heatmap'   },
+    { id: 'reasoning', label: '🧠 LLM Reasoning'  },
+    { id: 'llmlogs',   label: '📜 LLM Log'        },
   ]
 
   return (
@@ -331,6 +335,9 @@ export default function WorkflowDetail({ workflowId }) {
         </div>
 
         <div className="panel-body">
+          {activeTab === 'decisions' && (
+            <AgentDecisionPanel workflowId={workflowId} />
+          )}
           {activeTab === 'graph' && (
             <AgentGraph agents={agents} currentAgent={detail.current_agent} />
           )}
@@ -346,6 +353,9 @@ export default function WorkflowDetail({ workflowId }) {
               qaSummary={qa?.summary}
               riskLevel={qa?.risk_level}
             />
+          )}
+          {activeTab === 'llmlogs' && (
+            <LLMLogsViewer workflowId={workflowId} />
           )}
         </div>
       </div>

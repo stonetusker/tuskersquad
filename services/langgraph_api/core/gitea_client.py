@@ -3,23 +3,21 @@ Gitea API Client
 ================
 All Gitea interactions for TuskerSquad.
 
-Capabilities
-------------
-- Post PR comments  (rich markdown with findings table)
-- Merge a PR after human APPROVE
-- Create / set labels on a PR  (APPROVED / REJECTED / IN-REVIEW)
-- Trigger a Gitea Actions deploy pipeline after merge
-- Post commit status checks (pending → success / failure)
+PR Comment strategy (transparency-first):
+  1. An INITIAL comment is posted when the pipeline completes, showing
+     every agent's decision, tests run, findings and rationale.
+  2. A GOVERNANCE comment is added when a human approves/rejects/overrides.
+  3. Merge + deploy status updates are appended as follow-up comments.
 
 Environment variables
 ---------------------
-GITEA_URL              http://tuskersquad-gitea:3000   (required)
-GITEA_TOKEN            <personal-access-token>          (required)
-AUTO_MERGE_ON_APPROVE  true | false  (default false)
-MERGE_STYLE            merge | rebase | squash          (default merge)
-DEPLOY_ON_MERGE        true | false  (default false)
-DEPLOY_BRANCH          main                             (default main)
-DEPLOY_PIPELINE        deploy  (Gitea Actions workflow filename without .yml)
+GITEA_URL              http://tuskersquad-gitea:3000
+GITEA_TOKEN            <personal-access-token>
+AUTO_MERGE_ON_APPROVE  true | false
+MERGE_STYLE            merge | rebase | squash
+DEPLOY_ON_MERGE        true | false
+DEPLOY_BRANCH          main
+DEPLOY_PIPELINE        deploy
 """
 
 import logging
@@ -31,120 +29,247 @@ import httpx
 
 logger = logging.getLogger("langgraph.gitea")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Config helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Config ───────────────────────────────────────────────────────────────────
 
 def _get_config():
-    url   = os.getenv("GITEA_URL", "").rstrip("/")
-    token = os.getenv("GITEA_TOKEN", "")
-    return url, token
-
+    return os.getenv("GITEA_URL", "").rstrip("/"), os.getenv("GITEA_TOKEN", "")
 
 def _headers(token: str) -> dict:
     return {"Authorization": f"token {token}", "Content-Type": "application/json"}
 
-
 def _flag(env_var: str) -> bool:
     return os.getenv(env_var, "false").lower() in ("true", "1", "yes")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Rich comment builder
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Icons ────────────────────────────────────────────────────────────────────
 
 _DECISION_ICON = {
     "APPROVE":          "✅",
     "REJECT":           "❌",
     "REVIEW_REQUIRED":  "⚠️",
     "RETEST_REQUESTED": "🔄",
+    "PASS":             "🟢",
+    "FLAG":             "🔴",
+    "CHALLENGE":        "⚔️",
 }
-_SEV_ICON = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}
+_SEV_ICON     = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢", "NONE": "⚪"}
+_AGENT_ICON   = {
+    "planner":   "🧭",
+    "backend":   "⚙️",
+    "frontend":  "🎨",
+    "security":  "🔐",
+    "sre":       "📡",
+    "challenger":"⚔️",
+    "qa_lead":   "📋",
+    "judge":     "⚖️",
+}
+_AGENT_LABEL  = {
+    "planner":   "Planner Agent",
+    "backend":   "Backend Engineer",
+    "frontend":  "Frontend Engineer",
+    "security":  "Security Engineer",
+    "sre":       "SRE / Performance",
+    "challenger":"Challenger Agent",
+    "qa_lead":   "QA Lead",
+    "judge":     "Judge Agent",
+}
 
 
-def build_comment_body(
-    workflow_id: str,
-    decision: str,
+# ─── Per-agent decision block builder ────────────────────────────────────────
+
+def _agent_section(
+    agent: str,
     findings: list,
-    qa_summary: str = "",
-    risk_level: str = "",
-    rationale: str = "",
-    is_release: bool = False,
-    release_reason: str = "",
-    merged: bool = False,
-    deployed: bool = False,
-    deploy_url: str = "",
-) -> str:
-    icon  = _DECISION_ICON.get(decision, "🤖")
-    label = "Release Manager Override" if is_release else "TuskerSquad AI Governance"
-    ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    agent_decision: Optional[dict] = None,
+) -> list:
+    """
+    Build markdown lines for a single agent's section in the PR comment.
+    agent_decision: {decision, summary, risk_level, test_count}
+    findings: list of {agent, severity, title, description}
+    """
+    icon  = _AGENT_ICON.get(agent, "🤖")
+    label = _AGENT_LABEL.get(agent, agent.replace("_", " ").title())
+    my_findings = [f for f in findings if f.get("agent") == agent]
+
+    if agent_decision:
+        d         = agent_decision.get("decision", "PASS")
+        di        = _DECISION_ICON.get(d, "⚪")
+        risk      = agent_decision.get("risk_level", "LOW")
+        ri        = _SEV_ICON.get(risk, "⚪")
+        tests     = agent_decision.get("test_count", len(my_findings))
+        summary   = (agent_decision.get("summary") or "").strip()
+    else:
+        d       = "FLAG" if my_findings else "PASS"
+        di      = _DECISION_ICON.get(d, "⚪")
+        risk    = "HIGH" if any(f.get("severity") == "HIGH" for f in my_findings) else \
+                  "MEDIUM" if my_findings else "NONE"
+        ri      = _SEV_ICON.get(risk, "⚪")
+        tests   = len(my_findings)
+        summary = ""
 
     lines = [
-        f"## {icon} TuskerSquad Decision: **{decision}**",
-        f"> **{label}** · workflow `{workflow_id[:8]}` · {ts}",
+        f"#### {icon} {label}  {di} `{d}`  {ri} Risk: `{risk}`",
+    ]
+    if summary:
+        lines.append(f"> {summary[:400]}")
+        lines.append("")
+
+    if my_findings:
+        lines.append(f"**Tests run:** {tests} · **Findings:** {len(my_findings)}")
+        lines.append("")
+        for f in my_findings[:8]:
+            sev = f.get("severity", "LOW")
+            si  = _SEV_ICON.get(sev, "⚪")
+            desc = (f.get("description") or "")[:160]
+            lines.append(f"- {si} **{f.get('title', '?')}** — {desc}")
+        if len(my_findings) > 8:
+            lines.append(f"- *(+{len(my_findings)-8} more findings)*")
+    else:
+        lines.append(f"**Tests run:** {tests} · **Findings:** 0 — No issues detected.")
+
+    lines.append("")
+    return lines
+
+
+# ─── Full transparency comment builder ───────────────────────────────────────
+
+def build_initial_review_comment(
+    workflow_id: str,
+    decision:    str,
+    findings:    list,
+    qa_summary:  str = "",
+    risk_level:  str = "",
+    rationale:   str = "",
+    agent_decisions: Optional[dict] = None,   # {agent_name: {decision, summary, risk_level, test_count}}
+) -> str:
+    """
+    Build the rich initial PR comment posted when the pipeline completes.
+    Includes a section for every agent with their individual decision.
+    """
+    icon  = _DECISION_ICON.get(decision, "🤖")
+    ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    risk_icon = _SEV_ICON.get(risk_level, "⚪")
+
+    lines = [
+        f"## {icon} TuskerSquad AI Review — **{decision}**",
+        f"> Workflow `{workflow_id[:8]}` · {ts} · Overall Risk: {risk_icon} `{risk_level or 'UNKNOWN'}`",
         "",
     ]
 
-    if risk_level:
-        ri = _SEV_ICON.get(risk_level, "⚪")
-        lines += [f"**Overall Risk:** {ri} `{risk_level}`", ""]
-
+    # QA Lead summary box
     if qa_summary:
         lines += [
-            "<details>",
-            "<summary><strong>📋 QA Lead Summary</strong> (click to expand)</summary>",
+            "### 📋 QA Lead Summary",
             "",
             qa_summary[:800],
             "",
-            "</details>",
-            "",
         ]
 
+    # Judge rationale
     if rationale:
         lines += [
             "<details>",
-            "<summary><strong>⚖️ Judge Rationale</strong></summary>",
+            "<summary><strong>⚖️ Judge Agent Rationale</strong> (click to expand)</summary>",
             "",
-            rationale[:600],
+            rationale[:800],
             "",
             "</details>",
             "",
         ]
 
-    if is_release and release_reason:
-        lines += [f"**Business justification:** {release_reason}", ""]
+    # Per-agent breakdown
+    PIPELINE_ORDER = ["planner", "backend", "frontend", "security", "sre", "challenger", "qa_lead", "judge"]
+    lines += [
+        "---",
+        "### 🔍 Agent-by-Agent Findings",
+        "",
+        "<details>",
+        "<summary><strong>Click to expand full agent report</strong></summary>",
+        "",
+    ]
 
-    if findings:
-        lines += ["### 🔍 Findings", ""]
-        lines += ["| Agent | Severity | Finding |", "|-------|----------|---------|"]
-        for f in findings[:20]:
-            sev = f.get("severity", "LOW")
-            si  = _SEV_ICON.get(sev, "⚪")
-            lines.append(f"| `{f.get('agent','?')}` | {si} {sev} | {f.get('title','?')} |")
-        if len(findings) > 20:
-            lines.append(f"| … | | _{len(findings)-20} more findings_ |")
+    for agent in PIPELINE_ORDER:
+        ad = (agent_decisions or {}).get(agent)
+        lines += _agent_section(agent, findings, ad)
+
+    lines += ["</details>", ""]
+
+    # High-severity findings table at top level
+    high_findings = [f for f in findings if (f.get("severity") or "").upper() == "HIGH"]
+    if high_findings:
+        lines += ["### 🔴 High-Severity Findings", ""]
+        lines += ["| Agent | Finding | Description |", "|-------|---------|-------------|"]
+        for f in high_findings[:10]:
+            desc = (f.get("description") or "")[:100].replace("|", "\\|")
+            lines.append(f"| `{f.get('agent','?')}` | {f.get('title','?')} | {desc} |")
         lines.append("")
-
-    if merged:
-        lines += ["---", "🔀 **PR merged automatically by TuskerSquad after AI review**", ""]
-    if deployed:
-        dl = f" · [View pipeline]({deploy_url})" if deploy_url else ""
-        lines += [f"🚀 **Deployment pipeline triggered**{dl}", ""]
 
     lines += [
         "---",
-        "*Powered by [TuskerSquad](https://stonetusker.com) · Stonetusker Systems*",
+        f"*Powered by [TuskerSquad](https://stonetusker.com) · 8-Agent AI Pipeline · {ts}*",
     ]
     return "\n".join(lines)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Post comments
-# ─────────────────────────────────────────────────────────────────────────────
+def build_governance_comment(
+    workflow_id:    str,
+    decision:       str,
+    actor:          str = "Human Reviewer",
+    reason:         str = "",
+    is_release:     bool = False,
+    merged:         bool = False,
+    deployed:       bool = False,
+    deploy_url:     str  = "",
+) -> str:
+    """Compact governance decision comment (approve/reject/override)."""
+    icon  = _DECISION_ICON.get(decision, "🤖")
+    ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    label = "Release Manager Override" if is_release else "Human Governance Decision"
+
+    lines = [
+        f"### {icon} {label}: **{decision}**",
+        f"> **{actor}** · workflow `{workflow_id[:8]}` · {ts}",
+        "",
+    ]
+    if reason:
+        lines += [f"**Reason:** {reason}", ""]
+    if merged:
+        lines += ["🔀 **PR merged automatically by TuskerSquad**", ""]
+    if deployed:
+        dl = f" · [View pipeline]({deploy_url})" if deploy_url else ""
+        lines += [f"🚀 **Deployment pipeline triggered**{dl}", ""]
+    lines += ["---", "*TuskerSquad · Stonetusker Systems*"]
+    return "\n".join(lines)
+
+
+# Keep backward-compat alias
+def build_comment_body(
+    workflow_id: str,
+    decision:    str,
+    findings:    list,
+    qa_summary:  str = "",
+    risk_level:  str = "",
+    rationale:   str = "",
+    is_release:  bool = False,
+    release_reason: str = "",
+    merged:      bool = False,
+    deployed:    bool = False,
+    deploy_url:  str  = "",
+    agent_decisions: Optional[dict] = None,
+) -> str:
+    return build_initial_review_comment(
+        workflow_id=workflow_id,
+        decision=decision,
+        findings=findings,
+        qa_summary=qa_summary,
+        risk_level=risk_level,
+        rationale=rationale,
+        agent_decisions=agent_decisions,
+    )
+
+
+# ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
 def post_pr_comment_sync(owner_repo: str, pr_number: int, body: str) -> Optional[dict]:
-    """POST a markdown comment to a Gitea PR (sync)."""
     url, token = _get_config()
     if not url or not token:
         logger.info("gitea_skip_comment: config incomplete")
@@ -175,9 +300,7 @@ async def post_pr_comment_async(owner_repo: str, pr_number: int, body: str) -> O
         return None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PR Labels
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Labels ───────────────────────────────────────────────────────────────────
 
 _LABEL_COLOURS = {
     "tuskersquad:approved":  "27ae60",
@@ -186,8 +309,7 @@ _LABEL_COLOURS = {
     "tuskersquad:deployed":  "2980b9",
 }
 
-
-def _ensure_label(url: str, token: str, owner_repo: str, name: str) -> Optional[int]:
+def _ensure_label(url, token, owner_repo, name) -> Optional[int]:
     list_url = f"{url}/api/v1/repos/{owner_repo}/labels"
     try:
         with httpx.Client(timeout=8.0) as client:
@@ -197,8 +319,7 @@ def _ensure_label(url: str, token: str, owner_repo: str, name: str) -> Optional[
                 if lbl.get("name") == name:
                     return lbl["id"]
             colour = _LABEL_COLOURS.get(name, "95a5a6")
-            r2 = client.post(list_url, json={"name": name, "color": f"#{colour}"},
-                             headers=_headers(token))
+            r2 = client.post(list_url, json={"name": name, "color": f"#{colour}"}, headers=_headers(token))
             r2.raise_for_status()
             return r2.json().get("id")
     except Exception:
@@ -207,7 +328,6 @@ def _ensure_label(url: str, token: str, owner_repo: str, name: str) -> Optional[
 
 
 def set_pr_label(owner_repo: str, pr_number: int, label_name: str) -> bool:
-    """Attach a label to a PR, creating it in the repo first if needed."""
     url, token = _get_config()
     if not url or not token:
         return False
@@ -220,17 +340,13 @@ def set_pr_label(owner_repo: str, pr_number: int, label_name: str) -> bool:
             r = client.post(endpoint, json={"labels": [label_id]}, headers=_headers(token))
             return r.status_code in (200, 201)
     except Exception:
-        logger.exception("set_pr_label_failed repo=%s pr=%s label=%s",
-                         owner_repo, pr_number, label_name)
+        logger.exception("set_pr_label_failed")
         return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Commit Status
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Commit status ────────────────────────────────────────────────────────────
 
-def post_commit_status(owner_repo: str, sha: str, state: str, description: str) -> bool:
-    """state: pending | success | failure | warning | error"""
+def post_commit_status(owner_repo, sha, state, description) -> bool:
     url, token = _get_config()
     if not url or not token or not sha:
         return False
@@ -238,124 +354,61 @@ def post_commit_status(owner_repo: str, sha: str, state: str, description: str) 
     try:
         with httpx.Client(timeout=8.0) as client:
             r = client.post(endpoint, json={
-                "state":       state,
-                "description": description,
-                "context":     "tuskersquad/review",
+                "state": state, "description": description,
+                "context": "tuskersquad/review",
             }, headers=_headers(token))
             return r.status_code in (200, 201)
     except Exception:
-        logger.exception("post_commit_status_failed repo=%s sha=%s", owner_repo, sha)
+        logger.exception("post_commit_status_failed")
         return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Auto-Merge
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Auto-Merge ───────────────────────────────────────────────────────────────
 
-def merge_pr_sync(
-    owner_repo: str,
-    pr_number: int,
-    merge_style: Optional[str] = None,
-    commit_message: str = "",
-) -> dict:
-    """
-    Merge a Gitea PR via the REST API.
-
-    Returns
-    -------
-    {"success": bool, "status_code": int, "error": str|None}
-    """
+def merge_pr_sync(owner_repo, pr_number, merge_style=None, commit_message="") -> dict:
     url, token = _get_config()
     if not url or not token:
-        logger.warning("merge_pr_skipped: GITEA_URL or GITEA_TOKEN not set")
         return {"success": False, "status_code": 0, "error": "config_missing"}
-
     style = merge_style or os.getenv("MERGE_STYLE", "merge")
     if style not in ("merge", "rebase", "squash"):
         style = "merge"
-
     if not commit_message:
         commit_message = "chore: auto-merged by TuskerSquad after AI review ✅"
-
     endpoint = f"{url}/api/v1/repos/{owner_repo}/pulls/{pr_number}/merge"
-    payload  = {
-        "Do":                        style,
-        "merge_message_field":       commit_message,
-        "delete_branch_after_merge": False,
-    }
-
     try:
         with httpx.Client(timeout=15.0) as client:
-            r = client.post(endpoint, json=payload, headers=_headers(token))
-
+            r = client.post(endpoint, json={
+                "Do": style,
+                "merge_message_field": commit_message,
+                "delete_branch_after_merge": False,
+            }, headers=_headers(token))
         if r.status_code == 204:
-            logger.info("merge_pr_success repo=%s pr=%s style=%s",
-                        owner_repo, pr_number, style)
             return {"success": True, "status_code": 204, "error": None}
-
-        err = (r.text or "unknown")[:300]
-        logger.warning("merge_pr_non204 repo=%s pr=%s status=%s body=%s",
-                       owner_repo, pr_number, r.status_code, err)
-        return {"success": False, "status_code": r.status_code, "error": err}
-
+        return {"success": False, "status_code": r.status_code, "error": r.text[:300]}
     except Exception as exc:
-        logger.exception("merge_pr_exception repo=%s pr=%s", owner_repo, pr_number)
         return {"success": False, "status_code": 0, "error": str(exc)}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Deploy on Merge  (Gitea Actions workflow_dispatch)
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Deploy pipeline ──────────────────────────────────────────────────────────
 
-def trigger_deploy_pipeline(
-    owner_repo: str,
-    pr_number: int,
-    workflow_id: str,
-    ref: Optional[str] = None,
-) -> dict:
-    """
-    Dispatch a Gitea Actions workflow after merge.
-
-    The repo must contain  .gitea/workflows/<DEPLOY_PIPELINE>.yml
-    with  ``on: workflow_dispatch``.
-
-    Returns
-    -------
-    {"success": bool, "status_code": int, "error": str|None, "url": str}
-    """
+def trigger_deploy_pipeline(owner_repo, pr_number, workflow_id, ref=None) -> dict:
     url, token = _get_config()
     if not url or not token:
-        logger.warning("deploy_skipped: GITEA_URL or GITEA_TOKEN not set")
         return {"success": False, "status_code": 0, "error": "config_missing", "url": ""}
-
     pipeline = os.getenv("DEPLOY_PIPELINE", "deploy")
     branch   = ref or os.getenv("DEPLOY_BRANCH", "main")
     endpoint = f"{url}/api/v1/repos/{owner_repo}/actions/workflows/{pipeline}.yml/dispatches"
     run_url  = f"{url}/{owner_repo}/actions"
-
-    payload = {
-        "ref": branch,
-        "inputs": {
-            "pr_number":    str(pr_number),
-            "workflow_id":  workflow_id,
-            "triggered_by": "tuskersquad-auto-merge",
-        },
-    }
-
+    payload  = {"ref": branch, "inputs": {
+        "pr_number": str(pr_number),
+        "workflow_id": workflow_id,
+        "triggered_by": "tuskersquad-auto-merge",
+    }}
     try:
         with httpx.Client(timeout=15.0) as client:
             r = client.post(endpoint, json=payload, headers=_headers(token))
-
         if r.status_code in (200, 201, 204):
-            logger.info("deploy_triggered repo=%s pr=%s pipeline=%s branch=%s",
-                        owner_repo, pr_number, pipeline, branch)
             return {"success": True, "status_code": r.status_code, "error": None, "url": run_url}
-
-        err = (r.text or "unknown")[:300]
-        logger.warning("deploy_trigger_non2xx repo=%s status=%s body=%s",
-                       owner_repo, r.status_code, err)
-        return {"success": False, "status_code": r.status_code, "error": err, "url": run_url}
-
+        return {"success": False, "status_code": r.status_code, "error": r.text[:300], "url": run_url}
     except Exception as exc:
-        logger.exception("deploy_trigger_exception repo=%s pr=%s", owner_repo, pr_number)
         return {"success": False, "status_code": 0, "error": str(exc), "url": run_url}

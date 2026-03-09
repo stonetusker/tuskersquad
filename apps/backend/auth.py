@@ -1,73 +1,29 @@
-from datetime import datetime,timedelta
-
+"""
+Auth helpers for ShopFlow demo app.
+Uses bcrypt directly — no passlib dependency.
+"""
+from datetime import datetime, timedelta
+import bcrypt
 from jose import jwt
 
-from passlib.context import CryptContext
-
-SECRET_KEY="tuskersquad-secret"
-
-ALGORITHM="HS256"
-
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+SECRET_KEY  = "tuskersquad-demo-secret-key-2024"
+ALGORITHM   = "HS256"
+TOKEN_EXPIRY = 240  # 4 hours — convenient for demos
 
 
-pwd_context=CryptContext(
-
-    schemes=["bcrypt"],
-
-    deprecated="auto"
-
-)
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def hash_password(password:str):
-
-    return pwd_context.hash(password)
-
-
-def verify_password(
-
-    plain:str,
-
-    hashed:str
-
-):
-
-    return pwd_context.verify(
-
-        plain,
-
-        hashed
-
-    )
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
 
-def create_access_token(
-
-    data:dict
-
-):
-
-    to_encode=data.copy()
-
-    expire=datetime.utcnow()+timedelta(
-
-        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
-
-    )
-
-    to_encode.update(
-
-        {"exp":expire}
-
-    )
-
-    return jwt.encode(
-
-        to_encode,
-
-        SECRET_KEY,
-
-        algorithm=ALGORITHM
-
-    )
+def create_access_token(data: dict) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRY)
+    to_encode["exp"] = expire
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)

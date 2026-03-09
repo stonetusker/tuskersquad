@@ -79,3 +79,34 @@ CREATE INDEX IF NOT EXISTS idx_findings_wf  ON engineering_findings (workflow_id
 CREATE INDEX IF NOT EXISTS idx_govact_wf    ON governance_actions (workflow_id);
 CREATE INDEX IF NOT EXISTS idx_aglog_wf     ON agent_execution_log (workflow_id);
 CREATE INDEX IF NOT EXISTS idx_qa_wf        ON qa_summaries (workflow_id);
+
+-- LLM conversation log (agent ↔ Ollama conversations)
+CREATE TABLE IF NOT EXISTS llm_conversation_log (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workflow_id  UUID REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    agent        TEXT NOT NULL,
+    model        TEXT,
+    prompt       TEXT,
+    response     TEXT,
+    duration_ms  INTEGER,
+    success      BOOLEAN DEFAULT TRUE,
+    error        TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_llmlog_wf ON llm_conversation_log (workflow_id);
+CREATE INDEX IF NOT EXISTS idx_llmlog_agent ON llm_conversation_log (workflow_id, agent);
+
+-- Agent decision summaries (per-agent narrative for PR transparency)
+CREATE TABLE IF NOT EXISTS agent_decision_summary (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workflow_id UUID REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    agent       TEXT NOT NULL,
+    decision    TEXT,        -- PASS | FLAG | CHALLENGE | APPROVE | REJECT | REVIEW_REQUIRED
+    summary     TEXT,        -- human-readable paragraph
+    risk_level  TEXT,        -- HIGH | MEDIUM | LOW | NONE
+    test_count  INTEGER DEFAULT 0,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_decision_wf ON agent_decision_summary (workflow_id);
