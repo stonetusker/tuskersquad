@@ -87,7 +87,7 @@ def _build_template_summary(findings: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-async def _llm_summary(findings: List[Dict]) -> Optional[str]:
+async def _llm_summary(findings: List[Dict], workflow_id: str = None) -> Optional[str]:
     """Request a natural-language standup summary from phi3:mini via Ollama."""
     ollama_url = os.getenv("OLLAMA_URL")
     if not ollama_url:
@@ -114,7 +114,7 @@ async def _llm_summary(findings: List[Dict]) -> Optional[str]:
             "Standup Summary:"
         )
 
-        resp = await asyncio.wait_for(llm.generate("qa_lead", prompt), timeout=15)
+        resp = await asyncio.wait_for(llm.generate("qa_lead", prompt, workflow_id=workflow_id), timeout=90)
         return resp
 
     except asyncio.TimeoutError:
@@ -142,7 +142,7 @@ def run_qa_lead_agent(
     # Try LLM summary; fall back to template
     llm_summary = None
     try:
-        llm_summary = _run_async(_llm_summary(findings))
+        llm_summary = _run_async(_llm_summary(findings, workflow_id=str(workflow_id) if workflow_id else None))
     except RuntimeError:
         pass
 

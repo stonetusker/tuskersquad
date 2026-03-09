@@ -132,7 +132,7 @@ def _llm_finding_or_synthetic(
 
             try:
                 resp = _run_async(
-                    asyncio.wait_for(llm.generate(model_agent, prompt), timeout=90)
+                    asyncio.wait_for(llm.generate(model_agent, prompt, workflow_id=str(workflow_id) if workflow_id else None), timeout=90)
                 )
             except asyncio.TimeoutError:
                 logger.warning("llm_agent_timeout agent=%s", agent)
@@ -454,7 +454,7 @@ def judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 prompt = "Decide: APPROVE, REJECT, or REVIEW_REQUIRED for this PR based on findings:\n"
                 for f in findings:
                     prompt += f"- {f.get('agent')}: {f.get('title')} ({f.get('severity')})\n"
-                resp = _run_async(llm.generate("judge", prompt))
+                resp = _run_async(llm.generate("judge", prompt, workflow_id=str(workflow_id) if workflow_id else None))
                 rationale = resp or ""
                 if resp and "APPROVE" in resp.upper():
                     decision = "APPROVE"

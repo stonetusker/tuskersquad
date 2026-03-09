@@ -76,6 +76,7 @@ async def _llm_decision(
     findings: List[Dict],
     challenges: List[Dict],
     qa_summary: str,
+    workflow_id: str = None,
 ) -> Optional[str]:
     """Ask the LLM judge for a decision. Returns raw response text or None."""
     ollama_url = os.getenv("OLLAMA_URL")
@@ -109,7 +110,7 @@ async def _llm_decision(
             "Decision (APPROVE / REJECT / REVIEW_REQUIRED):"
         )
 
-        resp = await asyncio.wait_for(llm.generate("judge", prompt), timeout=15)
+        resp = await asyncio.wait_for(llm.generate("judge", prompt, workflow_id=workflow_id), timeout=90)
         return resp
 
     except asyncio.TimeoutError:
@@ -151,7 +152,8 @@ def run_judge_agent(
     llm_response = None
     try:
         llm_response = _run_async(
-            _llm_decision(findings, challenges, qa_summary)
+            _llm_decision(findings, challenges, qa_summary,
+                         workflow_id=str(workflow_id) if workflow_id else None)
         )
     except RuntimeError:
         pass

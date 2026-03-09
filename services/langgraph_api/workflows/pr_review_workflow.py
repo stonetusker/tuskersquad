@@ -257,11 +257,17 @@ def execute_workflow(workflow_id: str) -> None:
         try:
             from core.llm_client import get_llm_client
             _llm_instance = get_llm_client()
-            def _db_log(workflow_id=workflow_id, **kwargs):
+            _wf_id_for_log = workflow_id  # capture in local var, not as default arg
+            def _db_log(**kwargs):
+                # Ignore any workflow_id passed via kwargs — always use the
+                # captured workflow id for THIS run. If generate() passes
+                # workflow_id=None it would otherwise override the closure default.
+                kwargs.pop("workflow_id", None)
                 try:
                     _cb_db = SessionLocal()
                     try:
-                        LLMLogRepository(_cb_db).log_conversation(workflow_id=workflow_id, **kwargs)
+                        LLMLogRepository(_cb_db).log_conversation(
+                            workflow_id=_wf_id_for_log, **kwargs)
                     finally:
                         _cb_db.close()
                 except Exception as _e:
