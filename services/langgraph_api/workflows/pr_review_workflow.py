@@ -253,8 +253,8 @@ def execute_workflow(workflow_id: str) -> None:
 
         # Wire LLM client's DB callback so every LLM call is persisted
         try:
-            from core.llm_client import LLMClient
-            _llm_instance = LLMClient()
+            from core.llm_client import get_llm_client
+            _llm_instance = get_llm_client()
             def _db_log(workflow_id=workflow_id, **kwargs):
                 try:
                     llm_repo.log_conversation(workflow_id=workflow_id, **kwargs)

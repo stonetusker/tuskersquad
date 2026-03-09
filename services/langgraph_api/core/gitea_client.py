@@ -271,17 +271,37 @@ def build_comment_body(
 
 def post_pr_comment_sync(owner_repo: str, pr_number: int, body: str) -> Optional[dict]:
     url, token = _get_config()
-    if not url or not token:
-        logger.info("gitea_skip_comment: config incomplete")
+    if not url:
+        logger.warning("gitea_skip_comment: GITEA_URL not set")
+        return None
+    if not token:
+        logger.warning("gitea_skip_comment: GITEA_TOKEN not set — add it to infra/.env and restart")
         return None
     endpoint = f"{url}/api/v1/repos/{owner_repo}/issues/{pr_number}/comments"
+    logger.info("gitea_comment_post endpoint=%s", endpoint)
     try:
         with httpx.Client(timeout=10.0) as client:
             r = client.post(endpoint, json={"body": body}, headers=_headers(token))
-            r.raise_for_status()
+        if r.status_code in (200, 201):
+            logger.info("gitea_comment_ok repo=%s pr=%s", owner_repo, pr_number)
             return r.json()
+        # Log full details so the user can diagnose the failure
+        logger.error(
+            "gitea_comment_failed repo=%s pr=%s http=%s body=%s",
+            owner_repo, pr_number, r.status_code, r.text[:500],
+        )
+        if r.status_code == 401:
+            logger.error("gitea_401: token is invalid or expired — regenerate at http://localhost:3000/user/settings/applications")
+        elif r.status_code == 403:
+            logger.error("gitea_403: token lacks permission — needs 'issue' write scope for repo %s", owner_repo)
+        elif r.status_code == 404:
+            logger.error("gitea_404: repo or PR not found — check repo='%s' pr=%s exists in Gitea", owner_repo, pr_number)
+        return None
+    except httpx.ConnectError:
+        logger.error("gitea_connect_error: cannot reach %s — is Gitea running?", url)
+        return None
     except Exception:
-        logger.exception("post_pr_comment_sync_failed repo=%s pr=%s", owner_repo, pr_number)
+        logger.exception("gitea_comment_exception repo=%s pr=%s", owner_repo, pr_number)
         return None
 
 

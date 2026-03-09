@@ -94,8 +94,8 @@ async def _llm_summary(findings: List[Dict]) -> Optional[str]:
         return None
 
     try:
-        from core.llm_client import LLMClient
-        llm = LLMClient()
+        from core.llm_client import get_llm_client
+        llm = get_llm_client()
 
         findings_text = "\n".join(
             f"- [{f.get('severity')}] {f.get('agent')}: {f.get('title')} -- "

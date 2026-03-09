@@ -111,9 +111,9 @@ def _llm_finding_or_synthetic(
 
     if os.getenv("OLLAMA_URL"):
         try:
-            from core.llm_client import LLMClient
+            from core.llm_client import get_llm_client
 
-            llm = LLMClient()
+            llm = get_llm_client()
             agent_model_map = {
                 "backend": "backend_engineer",
                 "frontend": "frontend_engineer",
@@ -449,8 +449,8 @@ def judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Inline fallback
         if os.getenv("OLLAMA_URL"):
             try:
-                from core.llm_client import LLMClient
-                llm = LLMClient()
+                from core.llm_client import get_llm_client
+                llm = get_llm_client()
                 prompt = "Decide: APPROVE, REJECT, or REVIEW_REQUIRED for this PR based on findings:\n"
                 for f in findings:
                     prompt += f"- {f.get('agent')}: {f.get('title')} ({f.get('severity')})\n"

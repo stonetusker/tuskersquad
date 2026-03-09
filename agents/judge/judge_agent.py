@@ -83,8 +83,8 @@ async def _llm_decision(
         return None
 
     try:
-        from core.llm_client import LLMClient
-        llm = LLMClient()
+        from core.llm_client import get_llm_client
+        llm = get_llm_client()
 
         findings_text = "\n".join(
             f"- [{f.get('severity')}] {f.get('agent')}: {f.get('title')}"
