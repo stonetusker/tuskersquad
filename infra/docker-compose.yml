@@ -154,8 +154,9 @@ services:
     command: uvicorn services.integration_service.main:app --host 0.0.0.0 --port 8001
     environment:
       LANGGRAPH_URL:     "http://tuskersquad-langgraph:8000"
-      GITEA_URL:         "http://tuskersquad-gitea:3000"
-      GITEA_TOKEN:       "${GITEA_TOKEN:-}"
+      GITEA_URL:              "http://tuskersquad-gitea:3000"
+      GITEA_TOKEN:            "${GITEA_TOKEN:-}"
+      GITEA_WEBHOOK_SECRET:   "${GITEA_WEBHOOK_SECRET:-}"
       JIRA_URL:          "${JIRA_URL:-}"
       JIRA_TOKEN:        "${JIRA_TOKEN:-}"
       JIRA_PROJECT:      "${JIRA_PROJECT:-TUSKER}"

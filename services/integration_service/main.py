@@ -1,15 +1,38 @@
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import os
-import logging
+"""
+TuskerSquad Integration Service
+================================
+Receives Gitea PR webhooks and triggers the LangGraph review pipeline.
+
+Gitea webhook setup (shopflow repo → Settings → Webhooks → Add Webhook):
+  Type        : Gitea
+  Target URL  : http://tuskersquad-integration:8001/gitea/webhook
+                ↑ Use the container name — NOT localhost. Gitea runs inside
+                  Docker so localhost resolves to the Gitea container itself.
+  Content-Type: application/json
+  Events      : check "Pull Requests" only
+  Secret      : (optional) if set in Gitea, also set GITEA_WEBHOOK_SECRET
+                in infra/.env to the same value
+"""
+
 import asyncio
+import hashlib
+import hmac
+import logging
+import os
 from typing import Optional
 
 import httpx
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-app = FastAPI()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("integration_service")
 
-# Allow dev frontend to call the integration service
+app = FastAPI(title="TuskerSquad Integration Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,288 +41,253 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-LANGGRAPH_URL = os.getenv("LANGGRAPH_URL", "http://langgraph-api:8000")
-GITEA_URL = os.getenv("GITEA_URL", "http://tuskersquad-gitea:3000")
-GITEA_TOKEN = os.getenv("GITEA_TOKEN")
+LANGGRAPH_URL        = os.getenv("LANGGRAPH_URL",        "http://tuskersquad-langgraph:8000")
+GITEA_URL            = os.getenv("GITEA_URL",            "http://tuskersquad-gitea:3000")
+GITEA_TOKEN          = os.getenv("GITEA_TOKEN",          "")
+GITEA_WEBHOOK_SECRET = os.getenv("GITEA_WEBHOOK_SECRET", "")
 
-logger = logging.getLogger("integration_service")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+# Only these Gitea PR actions start a new review
+TRIGGER_ACTIONS = {"opened", "synchronize", "reopened"}
 
+
+# ── HMAC signature validation ─────────────────────────────────────────────────
+
+def _verify_signature(raw_body: bytes, sig_header: str) -> bool:
+    """
+    Verify Gitea's HMAC-SHA256 signature (X-Gitea-Signature header).
+    Only enforced when GITEA_WEBHOOK_SECRET is set in the environment.
+    If no secret is configured, all requests are accepted.
+    """
+    if not GITEA_WEBHOOK_SECRET:
+        return True  # secret not configured → allow all
+    if not sig_header:
+        logger.warning("webhook_sig_missing: secret is configured but header absent")
+        return False
+    expected = hmac.new(
+        GITEA_WEBHOOK_SECRET.encode(),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, sig_header.strip().lower())
+
+
+# ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+async def _post_with_retries(url: str, body: dict, retries: int = 3) -> dict:
+    last_exc: Optional[Exception] = None
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        for attempt in range(1, retries + 1):
+            try:
+                r = await client.post(url, json=body)
+                r.raise_for_status()
+                return r.json()
+            except Exception as exc:
+                last_exc = exc
+                logger.warning("http_retry url=%s attempt=%d err=%s", url, attempt, exc)
+                if attempt < retries:
+                    await asyncio.sleep(1.5)
+    raise last_exc  # type: ignore[misc]
+
+
+async def _post_pr_comment(repo: str, pr_number: int, body: str) -> bool:
+    """Post a comment to a Gitea PR. Silent on failure — best-effort only."""
+    if not GITEA_TOKEN:
+        logger.info("pr_comment_skip: GITEA_TOKEN not set in infra/.env")
+        return False
+    url = f"{GITEA_URL}/api/v1/repos/{repo}/issues/{pr_number}/comments"
+    headers = {
+        "Authorization": f"token {GITEA_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(url, json={"body": body}, headers=headers)
+        if r.status_code in (200, 201):
+            logger.info("pr_comment_posted repo=%s pr=%s", repo, pr_number)
+            return True
+        logger.warning(
+            "pr_comment_failed repo=%s pr=%s http=%s resp=%s",
+            repo, pr_number, r.status_code, r.text[:200],
+        )
+        return False
+    except Exception:
+        logger.exception("pr_comment_exception repo=%s pr=%s", repo, pr_number)
+        return False
+
+
+def _parse_gitea_pr_payload(payload: dict) -> tuple:
+    """
+    Pull (repository, pr_number, action) from a Gitea pull_request webhook.
+
+    Gitea payload shape:
+    {
+      "action":  "opened" | "synchronize" | "closed" | "reopened" | ...,
+      "number":  42,                      ← top-level PR number
+      "pull_request": { "number": 42 },   ← also here
+      "repository": {
+        "full_name": "owner/repo",         ← preferred
+        "name": "repo"                     ← fallback
+      }
+    }
+    """
+    action   = payload.get("action", "")
+    repo_obj = payload.get("repository") or {}
+    repo     = repo_obj.get("full_name") or repo_obj.get("name")
+    pr_obj   = payload.get("pull_request") or {}
+    pr_num   = payload.get("number") or pr_obj.get("number") or payload.get("pr_number")
+    try:
+        pr_num = int(pr_num) if pr_num is not None else None
+    except (TypeError, ValueError):
+        pr_num = None
+    return repo, pr_num, action
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "service": "integration-service"}
 
 
 @app.get("/")
 def root():
     return {
-        "service": "integration_service",
-        "status": "ok",
-        "endpoints": ["/health", "/gitea/webhook", "/webhook/simulate"],
-        "info": "POST /webhook/simulate to trigger a workflow; POST /gitea/webhook for real Gitea webhooks",
+        "service": "tuskersquad-integration",
+        "webhook_url": "http://tuskersquad-integration:8001/gitea/webhook",
+        "note": (
+            "Use the container name (tuskersquad-integration) in Gitea's webhook URL, "
+            "NOT localhost. Gitea runs inside Docker so localhost resolves to itself."
+        ),
     }
-
-
-async def post_with_retries(url: str, json: dict, retries: int = 3, delay: float = 1.0):
-    async with httpx.AsyncClient() as client:
-        for attempt in range(1, retries + 1):
-            try:
-                resp = await client.post(url, json=json, timeout=10.0)
-                resp.raise_for_status()
-                return resp
-            except Exception as exc:
-                logger.warning("POST failed", extra={"url": url, "attempt": attempt, "error": str(exc)})
-                if attempt == retries:
-                    raise
-                await asyncio.sleep(delay)
-
-
-async def post_pr_comment(repo: str, pr_number: int, body: str) -> Optional[dict]:
-    """Post a comment to a Gitea PR. Requires GITEA_TOKEN and GITEA_URL env vars.
-
-    Returns parsed JSON response on success, otherwise None.
-    """
-    if not GITEA_TOKEN:
-        logger.info("GITEA_TOKEN not set; skipping PR comment")
-        return None
-
-    # Gitea API: POST /api/v1/repos/{owner}/{repo}/issues/{index}/comments
-    try:
-        owner_repo = repo
-        # if payload uses full repo path like "owner/repo" keep it
-        if "/" in repo:
-            owner_repo = repo
-        url = f"{GITEA_URL}/api/v1/repos/{owner_repo}/issues/{pr_number}/comments"
-
-        headers = {"Authorization": f"token {GITEA_TOKEN}"}
-
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json={"body": body}, headers=headers, timeout=10.0)
-            resp.raise_for_status()
-            return resp.json()
-    except Exception as exc:
-        logger.exception("Failed to post PR comment", exc_info=exc)
-        return None
 
 
 @app.post("/gitea/webhook")
 async def gitea_webhook(request: Request):
-    payload = await request.json()
+    """
+    Receive a Gitea pull_request webhook and start a TuskerSquad review.
 
-    logger.info("Webhook received from Gitea", extra={"payload": payload})
+    Gitea sends X-Gitea-Event: pull_request for PR events.
+    Only action=opened|synchronize|reopened triggers a new review.
+    """
+    # 1. Read raw body for HMAC (must happen before .json())
+    raw_body = await request.body()
 
-    repository = payload.get("repository", {}).get("full_name") or payload.get("repository", {}).get("name")
-    pr_number = payload.get("pull_request", {}).get("number") or payload.get("pr_number") or 1
+    # 2. Validate signature if secret is configured
+    sig = request.headers.get("X-Gitea-Signature", "")
+    if not _verify_signature(raw_body, sig):
+        logger.warning("webhook_rejected: invalid HMAC signature")
+        raise HTTPException(status_code=401, detail="invalid webhook signature")
 
-    if not repository:
-        raise HTTPException(status_code=400, detail="missing repository in payload")
-
+    # 3. Decode JSON
     try:
-        # trigger workflow in LangGraph service
-        body = {"repo": repository, "pr_number": pr_number}
-        await post_with_retries(f"{LANGGRAPH_URL}/api/workflow/start", json=body)
-    except Exception as exc:
-        logger.exception("Failed to trigger LangGraph workflow", exc_info=exc)
-        raise HTTPException(status_code=502, detail=str(exc))
-
-    # optional: post a comment that workflow was started (best-effort)
-    try:
-        comment = f"TuskerSquad: workflow triggered for {repository} PR #{pr_number}"
-        await post_pr_comment(repository, pr_number, comment)
+        import json as _json
+        payload = _json.loads(raw_body)
     except Exception:
-        # do not fail the webhook if posting comment fails
-        logger.exception("Failed to post PR comment (non-fatal)")
+        raise HTTPException(status_code=400, detail="invalid JSON body")
 
-    return {"status": "workflow triggered"}
+    # 4. Event type guard — only pull_request events contain PR data
+    event = request.headers.get("X-Gitea-Event", "")
+    logger.info("webhook_received event='%s'", event)
+
+    if event and event != "pull_request":
+        logger.info("webhook_skip: event='%s' is not pull_request", event)
+        return {"status": "ignored", "reason": f"event '{event}' does not trigger review"}
+
+    # 5. Parse PR fields
+    repository, pr_number, action = _parse_gitea_pr_payload(payload)
+
+    logger.info(
+        "webhook_pr_parsed: action='%s' repo='%s' pr=%s",
+        action, repository, pr_number,
+    )
+
+    # 6. Action guard — only start reviews on open/push
+    if action and action not in TRIGGER_ACTIONS:
+        logger.info("webhook_skip: action='%s' not in %s", action, TRIGGER_ACTIONS)
+        return {"status": "ignored", "reason": f"action '{action}' does not trigger review"}
+
+    # 7. Validate required fields
+    if not repository:
+        logger.error("webhook_error: missing repository. payload=%s", str(payload)[:400])
+        raise HTTPException(status_code=400, detail="missing repository in payload")
+    if pr_number is None:
+        logger.error("webhook_error: missing pr_number. payload=%s", str(payload)[:400])
+        raise HTTPException(status_code=400, detail="missing pr_number in payload")
+
+    # 8. Post immediate "in-review" comment (fire-and-forget, don't block response)
+    asyncio.create_task(_post_pr_comment(
+        repository, pr_number,
+        "## 🔍 TuskerSquad Review Started\n\n"
+        f"> **{repository}** · PR #{pr_number} · `{action}`\n\n"
+        "The 8-agent AI pipeline is now running. "
+        "Each agent will post its findings as a comment when it completes.\n\n"
+        "| Agent | Role |\n|-------|------|\n"
+        "| 🧭 Planner | Scope & strategy |\n"
+        "| ⚙️ Backend | API & pytest |\n"
+        "| 🎨 Frontend | UI / Playwright |\n"
+        "| 🔐 Security | OWASP probes |\n"
+        "| 📡 SRE | Latency & load |\n"
+        "| ⚔️ Challenger | False-positive audit |\n"
+        "| 📋 QA Lead | Risk synthesis |\n"
+        "| ⚖️ Judge | Final decision |\n\n"
+        "*Powered by TuskerSquad · Stonetusker Systems*"
+    ))
+
+    # 9. Trigger the review workflow
+    try:
+        result = await _post_with_retries(
+            f"{LANGGRAPH_URL}/api/workflow/start",
+            body={"repo": repository, "pr_number": pr_number},
+        )
+        workflow_id = result.get("workflow_id", "unknown")
+        logger.info(
+            "workflow_started repo='%s' pr=%s workflow_id=%s",
+            repository, pr_number, workflow_id,
+        )
+        return {
+            "status": "workflow_started",
+            "workflow_id": workflow_id,
+            "repository": repository,
+            "pr_number": pr_number,
+            "action": action,
+        }
+    except Exception as exc:
+        logger.exception("workflow_start_failed repo='%s' pr=%s", repository, pr_number)
+        # Return 200 so Gitea doesn't retry in a loop
+        return JSONResponse(
+            status_code=200,
+            content={"status": "error", "detail": str(exc)},
+        )
 
 
 @app.post("/webhook/simulate")
 async def simulate_webhook(request: Request):
-    payload = await request.json()
+    """Manual trigger for testing. Body: { "repo": "owner/repo", "pr_number": 1 }"""
+    try:
+        import json as _json
+        payload = _json.loads(await request.body())
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+
     repository = payload.get("repo") or payload.get("repository")
-    pr_number = payload.get("pr_number") or payload.get("pr") or 1
+    pr_number  = int(payload.get("pr_number") or payload.get("pr") or 1)
+
     if not repository:
-        raise HTTPException(status_code=400, detail="missing repo field")
+        raise HTTPException(status_code=400, detail="missing 'repo' field")
+
+    logger.info("simulate_webhook repo='%s' pr=%s", repository, pr_number)
 
     try:
-        body = {"repo": repository, "pr_number": pr_number}
-        await post_with_retries(f"{LANGGRAPH_URL}/api/workflow/start", json=body)
+        result = await _post_with_retries(
+            f"{LANGGRAPH_URL}/api/workflow/start",
+            body={"repo": repository, "pr_number": pr_number},
+        )
+        return {
+            "status": "workflow_started",
+            "workflow_id": result.get("workflow_id"),
+            "repository": repository,
+            "pr_number": pr_number,
+        }
     except Exception as exc:
-        logger.exception("Failed to trigger LangGraph workflow (simulate)", exc_info=exc)
+        logger.exception("simulate_start_failed")
         raise HTTPException(status_code=502, detail=str(exc))
-
-    return {"workflow_id": f"sim-{int(asyncio.get_event_loop().time()*1000)}", "status": "RUNNING"}
-
-
-# ---------------------------------------------------------------------------
-# Git status update
-# ---------------------------------------------------------------------------
-
-@app.post("/git/status")
-async def update_git_status(request: Request):
-    """
-    Update the commit status on a Gitea PR.
-    Payload: { "repo": "owner/repo", "pr_number": N, "state": "pending|success|failure", "description": "..." }
-    """
-    payload = await request.json()
-    repo = payload.get("repo")
-    state = payload.get("state", "pending")
-    description = payload.get("description", "TuskerSquad review in progress")
-
-    if not repo:
-        raise HTTPException(status_code=400, detail="missing repo field")
-
-    result = {
-        "status": "recorded",
-        "repo": repo,
-        "state": state,
-        "description": description,
-    }
-
-    if GITEA_TOKEN:
-        try:
-            # Gitea commit status API
-            sha = payload.get("sha")
-            if sha:
-                url = f"{GITEA_URL}/api/v1/repos/{repo}/statuses/{sha}"
-                headers = {"Authorization": f"token {GITEA_TOKEN}"}
-                async with httpx.AsyncClient() as client:
-                    resp = await client.post(
-                        url,
-                        json={"state": state, "description": description, "context": "tuskersquad"},
-                        headers=headers,
-                        timeout=10.0,
-                    )
-                    result["gitea_response"] = resp.status_code
-        except Exception as exc:
-            logger.exception("git_status_post_failed")
-            result["error"] = str(exc)
-
-    logger.info("git_status_updated", extra=result)
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Jira integration (stub — logs action, returns simulated response)
-# ---------------------------------------------------------------------------
-
-JIRA_URL = os.getenv("JIRA_URL", "")
-JIRA_TOKEN = os.getenv("JIRA_TOKEN", "")
-JIRA_PROJECT = os.getenv("JIRA_PROJECT", "TUSKER")
-
-
-@app.post("/jira/create")
-async def create_jira_issue(request: Request):
-    """
-    Create a Jira issue for a finding.
-    Payload: { "summary": "...", "description": "...", "priority": "Medium", "workflow_id": "..." }
-
-    When JIRA_URL and JIRA_TOKEN are set, posts to the real Jira REST API.
-    Otherwise returns a simulated response for demo purposes.
-    """
-    payload = await request.json()
-    summary = payload.get("summary", "TuskerSquad finding")
-    description = payload.get("description", "")
-    priority = payload.get("priority", "Medium")
-    workflow_id = payload.get("workflow_id", "unknown")
-
-    logger.info(
-        "jira_create_issue",
-        extra={"summary": summary, "priority": priority, "workflow_id": workflow_id},
-    )
-
-    if JIRA_URL and JIRA_TOKEN:
-        try:
-            issue_payload = {
-                "fields": {
-                    "project": {"key": JIRA_PROJECT},
-                    "summary": summary,
-                    "description": description,
-                    "issuetype": {"name": "Bug"},
-                    "priority": {"name": priority},
-                }
-            }
-            headers = {
-                "Authorization": f"Bearer {JIRA_TOKEN}",
-                "Content-Type": "application/json",
-            }
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{JIRA_URL}/rest/api/3/issue",
-                    json=issue_payload,
-                    headers=headers,
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return {
-                    "status": "created",
-                    "issue_key": data.get("key"),
-                    "issue_url": f"{JIRA_URL}/browse/{data.get('key')}",
-                    "workflow_id": workflow_id,
-                }
-        except Exception as exc:
-            logger.exception("jira_api_failed")
-            # Fall through to simulated response
-
-    # Simulated response when Jira is not configured
-    simulated_key = f"{JIRA_PROJECT}-{abs(hash(summary)) % 9000 + 1000}"
-    return {
-        "status": "simulated",
-        "issue_key": simulated_key,
-        "issue_url": f"https://jira.example.com/browse/{simulated_key}",
-        "workflow_id": workflow_id,
-        "note": "Set JIRA_URL and JIRA_TOKEN environment variables to connect to a real Jira instance.",
-    }
-
-
-# ---------------------------------------------------------------------------
-# Slack notification (stub — logs action, returns simulated response)
-# ---------------------------------------------------------------------------
-
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
-
-
-@app.post("/slack/notify")
-async def slack_notify(request: Request):
-    """
-    Send a Slack notification about a workflow event.
-    Payload: { "message": "...", "workflow_id": "...", "level": "info|warning|critical" }
-
-    When SLACK_WEBHOOK_URL is set, posts to the real Slack incoming webhook.
-    Otherwise returns a simulated response for demo purposes.
-    """
-    payload = await request.json()
-    message = payload.get("message", "TuskerSquad notification")
-    workflow_id = payload.get("workflow_id", "unknown")
-    level = payload.get("level", "info")
-
-    level_emoji = {"info": ":information_source:", "warning": ":warning:", "critical": ":red_circle:"}.get(level, ":white_circle:")
-
-    logger.info(
-        "slack_notify",
-        extra={"message": message, "level": level, "workflow_id": workflow_id},
-    )
-
-    if SLACK_WEBHOOK_URL:
-        try:
-            slack_payload = {
-                "text": f"{level_emoji} *TuskerSquad* | Workflow `{workflow_id}`\n{message}"
-            }
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    SLACK_WEBHOOK_URL, json=slack_payload, timeout=10.0
-                )
-                resp.raise_for_status()
-                return {"status": "sent", "workflow_id": workflow_id}
-        except Exception as exc:
-            logger.exception("slack_webhook_failed")
-
-    # Simulated response
-    return {
-        "status": "simulated",
-        "message": message,
-        "workflow_id": workflow_id,
-        "note": "Set SLACK_WEBHOOK_URL environment variable to send real Slack notifications.",
-    }

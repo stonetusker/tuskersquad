@@ -302,6 +302,7 @@ def execute_workflow(workflow_id: str) -> None:
             wf_repo.update_workflow_status(workflow_id, "COMPLETED")
             _update_registry(workflow_id, "COMPLETED", rationale, qa_summary, risk_level)
             logger.info("auto_decision workflow=%s decision=%s", workflow_id, decision)
+            _post_agent_pr_comments(db, workflow_id, result, f_repo, agent_decisions)
             _post_initial_pr_comment(db, workflow_id, result, f_repo, qa_summary,
                                      risk_level, agent_decisions)
             return
@@ -309,6 +310,7 @@ def execute_workflow(workflow_id: str) -> None:
         wf_repo.update_workflow_status(workflow_id, "WAITING_HUMAN_APPROVAL")
         _update_registry(workflow_id, "WAITING_HUMAN_APPROVAL", rationale, qa_summary, risk_level,
                          extra={"agent_decisions": agent_decisions})
+        _post_agent_pr_comments(db, workflow_id, result, f_repo, agent_decisions)
         _post_initial_pr_comment(db, workflow_id, result, f_repo, qa_summary,
                                  risk_level, agent_decisions)
 
@@ -365,6 +367,86 @@ def resume_workflow_with_decision(workflow_id: str, decision: str, reason: str =
     except Exception:
         logger.exception("resume_workflow_failed workflow=%s", workflow_id)
 
+
+
+_AGENT_ICON = {
+    "planner":    "🧭",
+    "backend":    "⚙️",
+    "frontend":   "🎨",
+    "security":   "🔐",
+    "sre":        "📡",
+    "challenger": "⚔️",
+    "qa_lead":    "📋",
+    "judge":      "⚖️",
+}
+_SEV_ICON = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢", "NONE": "⚪"}
+_DEC_ICON = {"APPROVE": "✅", "REJECT": "❌", "REVIEW_REQUIRED": "⚠️",
+             "PASS": "🟢", "FLAG": "🔴", "CHALLENGE": "⚔️"}
+_PIPELINE_ORDER = ["planner", "backend", "frontend", "security",
+                   "sre", "challenger", "qa_lead", "judge"]
+
+
+def _post_agent_pr_comments(
+    db, workflow_id: str, result: dict,
+    findings_repo, agent_decisions: dict,
+) -> None:
+    """
+    Post one PR comment per agent immediately after the pipeline completes.
+    Gives the PR author a clear per-agent breakdown rather than one huge blob.
+    """
+    try:
+        wf = WorkflowRepository(db).get_workflow(workflow_id)
+        if not (wf and wf.repository and wf.pr_number):
+            return
+
+        all_findings = findings_repo.list_by_workflow(workflow_id)
+        findings_by_agent: dict = {}
+        for f in all_findings:
+            findings_by_agent.setdefault(f.agent, []).append(f)
+
+        for agent in _PIPELINE_ORDER:
+            ad       = agent_decisions.get(agent, {})
+            decision = ad.get("decision", "PASS")
+            summary  = ad.get("summary", "")
+            risk     = ad.get("risk_level", "NONE")
+            tests    = ad.get("test_count", 0)
+            icon     = _AGENT_ICON.get(agent, "🤖")
+            di       = _DEC_ICON.get(decision, "⚪")
+            ri       = _SEV_ICON.get(risk, "⚪")
+            my_f     = findings_by_agent.get(agent, [])
+
+            lines = [
+                f"### {icon} **{agent.replace('_', ' ').title()} Agent** — {di} `{decision}`  {ri} Risk: `{risk}`",
+                "",
+            ]
+            if summary:
+                lines.append(f"> {summary[:500]}")
+                lines.append("")
+
+            if my_f:
+                lines.append(f"**Tests run:** {tests} · **Findings:** {len(my_f)}")
+                lines.append("")
+                for finding in my_f[:6]:
+                    sev  = finding.severity or "LOW"
+                    si   = _SEV_ICON.get(sev, "⚪")
+                    desc = (finding.description or "")[:140]
+                    lines.append(f"- {si} **[{sev}]** {finding.title} — {desc}")
+                if len(my_f) > 6:
+                    lines.append(f"- *(+ {len(my_f) - 6} more findings)*")
+            else:
+                lines.append(f"**Tests run:** {tests} · **Findings:** 0 — All checks passed.")
+
+            lines += ["", "---", "*TuskerSquad · Stonetusker Systems*"]
+            body = "\n".join(lines)
+
+            try:
+                post_pr_comment_sync(wf.repository, wf.pr_number, body)
+                logger.info("agent_comment_posted agent=%s workflow=%s", agent, workflow_id)
+            except Exception:
+                logger.exception("agent_comment_failed agent=%s workflow=%s", agent, workflow_id)
+
+    except Exception:
+        logger.exception("post_agent_pr_comments_failed workflow=%s", workflow_id)
 
 def _post_initial_pr_comment(db, workflow_id, result, findings_repo,
                               qa_summary, risk_level, agent_decisions):
