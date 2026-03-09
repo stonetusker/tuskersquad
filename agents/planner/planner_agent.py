@@ -1,22 +1,38 @@
-from typing import Dict
+"""
+Planner Agent
+=============
+Analyses the PR and decides which agents to run.
+Currently deterministic (no LLM) for stability.
+"""
+
+import logging
+from datetime import datetime
+from typing import Any, Dict
+
+logger = logging.getLogger("agents.planner")
 
 
-async def run_planner(repo: str, pr_number: int) -> Dict:
+def run_planner_agent(
+    workflow_id: Any,
+    repository: str,
+    pr_number: int,
+    fid: int = 1,
+) -> Dict[str, Any]:
     """
-    Deterministic planner for Week-4 orchestration.
-
-    The planner decides which engineering agents
-    should review the Pull Request.
-
-    LLM reasoning will be reintroduced later
-    once orchestration is fully stable.
+    Synchronous planner agent — returns the pipeline plan.
+    All 4 engineering agents always run for maximum coverage.
     """
-
+    start = datetime.utcnow()
+    log = {
+        "agent": "planner",
+        "status": "COMPLETED",
+        "started_at": start.isoformat(),
+        "completed_at": datetime.utcnow().isoformat(),
+    }
+    logger.info("planner_complete workflow=%s repo=%s pr=%d", workflow_id, repository, pr_number)
     return {
-        "agents": [
-            "security",
-            "backend",
-            "frontend",
-            "sre"
-        ]
+        "plan": ["backend", "frontend", "security", "sre"],
+        "findings": [],
+        "agent_log": log,
+        "fid": fid,
     }

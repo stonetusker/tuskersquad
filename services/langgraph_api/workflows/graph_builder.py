@@ -296,29 +296,57 @@ def sre_node(state: Dict[str, Any]) -> Dict[str, Any]:
 def challenger_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Challenger Agent — reviews all findings and raises disputes for
-    contradictions or environment-variance issues.
+    environment-variance issues (e.g. container cold-start latency).
+    Delegates to agents.challenger.challenger_agent.run_challenger_agent.
     """
     workflow_id = state.get("workflow_id")
-    findings = state.get("findings", [])
-    start = datetime.utcnow()
+    findings    = state.get("findings", [])
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
 
-    challenges: List[Dict[str, Any]] = []
-    for f in findings:
-        if f.get("test_name") == "checkout_latency":
-            challenges.append({
-                "finding_id": f["id"],
-                "challenger_agent": "challenger",
-                "challenge_reason": "Benchmark environment variance detected — latency may be inflated by container cold start",
-                "decision": "REVIEW",
-                "created_at": datetime.utcnow().isoformat(),
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "challenger"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.challenger.challenger_agent", "run_challenger_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                findings=findings,
+                fid=fid,
+            )
+            challenges = result.get("challenges", [])
+            log = result.get("agent_log", {
+                "agent": "challenger",
+                "status": "COMPLETED",
+                "started_at": start.isoformat(),
+                "completed_at": datetime.utcnow().isoformat(),
             })
+        except Exception:
+            logger.exception("challenger_runner_failed")
+            challenges = []
+            log = {"agent": "challenger", "status": "FAILED",
+                   "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()}
+    else:
+        # Inline fallback
+        challenges = []
+        for f in findings:
+            if f.get("test_name") == "checkout_latency":
+                challenges.append({
+                    "finding_id": f.get("id"),
+                    "challenger_agent": "challenger",
+                    "challenge_reason": "Benchmark environment variance detected — latency may be inflated by container cold start",
+                    "decision": "REVIEW",
+                    "created_at": datetime.utcnow().isoformat(),
+                })
+        log = {"agent": "challenger", "status": "COMPLETED",
+               "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()}
 
-    log = {
-        "agent": "challenger",
-        "status": "COMPLETED",
-        "started_at": start.isoformat(),
-        "completed_at": datetime.utcnow().isoformat(),
-    }
     logger.info("node_completed node=challenger workflow=%s challenges=%d", workflow_id, len(challenges))
     return {"challenges": challenges, "agent_logs": [log]}
 

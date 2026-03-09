@@ -1,26 +1,32 @@
+# ── TuskerSquad: LangGraph API / Dashboard / Integration ──────────────────────
 FROM python:3.11-slim
 
-# Install system deps needed by psycopg2-binary and compilation
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
-    curl vim \
-    && rm -rf /var/lib/apt/lists/*
+# System deps:
+#   gcc, libffi-dev  → bcrypt / cryptography wheels
+#   libpq-dev        → psycopg2-binary fallback headers
+#   curl             → useful for manual healthchecks
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libffi-dev libpq-dev vim curl \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python dependencies first (better layer caching)
+# 1. Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip==24.3.1
+
+# 2. Install Python deps (cached layer)
 COPY services/langgraph_api/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# Copy full project so all packages are importable
+# 3. Copy ALL source (PYTHONPATH=/app exposes agents/, core/, services/, config/)
 COPY . /app
 
-# PYTHONPATH=/app lets Python find:
-#   - services.langgraph_api.*   (the main service)
-#   - agents.*                   (all agent modules)
-#   - core.*                     (llm_client, model_router)
-#   - apps.*                     (demo app, for test probes)
+# Create log dir (also created at runtime, but good to have for volume mount)
+RUN mkdir -p /app/logs
+
 ENV PYTHONPATH=/app
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=40s --retries=10 \
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=4)"
 
 CMD ["uvicorn", "services.langgraph_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,20 +1,20 @@
+# ── TuskerSquad: ShopFlow Demo Backend ────────────────────────────────────────
 FROM python:3.11-slim
 
-# System deps needed for bcrypt (cffi/gcc)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libffi-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Build-time system deps (gcc needed for bcrypt C extension)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libffi-dev vim curl \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python deps first (layer caching)
+# 1. Install Python deps (layer cached until requirements change)
 COPY apps/backend/requirements.txt /tmp/demo-requirements.txt
-RUN pip install --no-cache-dir -r /tmp/demo-requirements.txt
+RUN pip install --no-cache-dir --upgrade pip==24.3.1 \
+ && pip install --no-cache-dir -r /tmp/demo-requirements.txt
 
-# Copy full project (changes most often - last layer)
-COPY . /app
+# 2. Copy source (changes most often → last layer)
+COPY apps/backend/ /app/apps/backend/
 
 ENV PYTHONPATH=/app
 

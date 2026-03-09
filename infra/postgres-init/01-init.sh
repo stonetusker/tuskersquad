@@ -1,27 +1,17 @@
 #!/bin/bash
-# ─────────────────────────────────────────────────────────────────────────────
-# TuskerSquad — Stonetusker Systems
-# Postgres init: runs on first container start only.
-# Creates DB and user idempotently, then applies schema.
-# ─────────────────────────────────────────────────────────────────────────────
+# TuskerSquad — Postgres initialisation
+# Runs once on first container start (postgres-init is mounted as initdb.d).
+# The DB "tuskersquad" and user "tusker" already exist because Docker creates them
+# from POSTGRES_USER / POSTGRES_DB env vars — we just ensure privileges are correct.
 set -e
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-SQL
-    -- Ensure tuskersquad DB exists
-    SELECT 'CREATE DATABASE tuskersquad'
-    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'tuskersquad')
-    \gexec
+    -- uuid-ossp extension used by SQLAlchemy UUID columns
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-    -- Ensure tusker user exists
-    DO \$\$
-    BEGIN
-        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'tusker') THEN
-            CREATE ROLE tusker LOGIN PASSWORD 'tusker';
-        END IF;
-    END
-    \$\$;
-
+    -- Ensure the tusker role has full access (idempotent)
     GRANT ALL PRIVILEGES ON DATABASE tuskersquad TO tusker;
+    GRANT ALL ON SCHEMA public TO tusker;
 SQL
 
-echo "TuskerSquad: postgres init complete"
+echo "TuskerSquad: postgres init complete ✓"

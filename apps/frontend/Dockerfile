@@ -1,16 +1,18 @@
-FROM node:20-slim
+# ── TuskerSquad: React + Vite Frontend ────────────────────────────────────────
+FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy package files first for layer caching
-COPY package*.json ./
+# 1. Copy manifests first (cached layer)
+COPY package.json package-lock.json ./
 
-RUN npm install --no-audit --no-fund
+# 2. Install deps (reproducible, no audit noise)
+RUN npm ci --no-audit --no-fund
 
-# Copy source
+# 3. Copy source
 COPY . .
 
 EXPOSE 5173
 
-# --host 0.0.0.0 makes Vite accessible from outside the container
+# Vite dev server — proxy targets set via VITE_DASH_URL / VITE_INTEGRATION_URL env
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

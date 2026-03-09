@@ -1,67 +1,64 @@
+"""
+Challenger Agent
+================
+Reviews engineering findings and raises disputes for findings that may
+be affected by environment variance (e.g. container cold-start latency).
+No external imports required — operates purely on the findings list.
+"""
+
+import logging
 from datetime import datetime
+from typing import Any, Dict, List
 
-from repositories.workflow_repository import WorkflowRepository
-from state.workflow_state import WorkflowState
-
-repo = WorkflowRepository()
+logger = logging.getLogger("agents.challenger")
 
 
-async def challenger_node(state: WorkflowState) -> WorkflowState:
+def run_challenger_agent(
+    workflow_id: Any,
+    repository: str,
+    pr_number: int,
+    findings: List[Dict],
+    fid: int = 1,
+) -> Dict[str, Any]:
     """
-    Challenger agent reviews engineering findings and produces
-    counter-arguments before the Judge makes the final decision.
+    Synchronous challenger agent called by graph_builder._run_eng_agent().
+    Returns: {findings, challenges, agent_log, fid}
     """
+    start = datetime.utcnow()
+    challenges: List[Dict[str, Any]] = []
 
-    state["current_agent"] = "challenger"
+    ENVIRONMENT_SENSITIVE = {"checkout_latency", "load_test", "p95_latency"}
 
-    start_time = datetime.utcnow()
-
-    findings = state["findings"]
-    challenges = []
-
-    for idx, finding in enumerate(findings):
-
-        # Example deterministic debate logic
-        if finding["test_name"] == "checkout_latency":
-
-            challenge = {
-                "finding_id": idx + 1,
+    for finding in findings:
+        test_name = finding.get("test_name", "")
+        if test_name in ENVIRONMENT_SENSITIVE:
+            challenges.append({
+                "finding_id": finding.get("id"),
                 "challenger_agent": "challenger",
-                "challenge_reason": "Benchmark environment variance detected",
-                "adjusted_confidence": 0.62,
-                "recommendation_override": "REVIEW"
-            }
+                "challenge_reason": (
+                    "Benchmark environment variance detected — latency measurements "
+                    "may be inflated by container cold-start or shared-CPU throttling. "
+                    "Recommend re-running on a warm instance before blocking deployment."
+                ),
+                "decision": "REVIEW",
+                "created_at": datetime.utcnow().isoformat(),
+            })
 
-            challenges.append(challenge)
+    log = {
+        "agent": "challenger",
+        "status": "COMPLETED",
+        "started_at": start.isoformat(),
+        "completed_at": datetime.utcnow().isoformat(),
+    }
 
-            repo.store_finding_challenge(
-                workflow_id=state["workflow_id"],
-                finding_id=idx + 1,
-                challenger_agent="challenger",
-                challenge_reason=challenge["challenge_reason"],
-                adjusted_confidence=challenge["adjusted_confidence"],
-                recommendation_override=challenge["recommendation_override"]
-            )
-
-    state["challenges"] = challenges
-
-    state["logs"].append(
-        {
-            "timestamp": datetime.utcnow().isoformat(),
-            "agent": "challenger",
-            "message": f"{len(challenges)} challenges generated",
-        }
+    logger.info(
+        "challenger_complete workflow=%s challenges=%d",
+        workflow_id, len(challenges),
     )
 
-    end_time = datetime.utcnow()
-
-    repo.log_agent_execution(
-        workflow_id=state["workflow_id"],
-        agent_name="challenger",
-        model_used="qwen2.5:14b",
-        status="SUCCESS",
-        started_at=start_time,
-        completed_at=end_time,
-    )
-
-    return state
+    return {
+        "findings": [],       # challenger does not add new findings
+        "challenges": challenges,
+        "agent_log": log,
+        "fid": fid,
+    }
