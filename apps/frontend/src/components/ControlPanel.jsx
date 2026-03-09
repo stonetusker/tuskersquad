@@ -1,16 +1,20 @@
 import React, { useState } from 'react'
 import api from '../api'
 
+// Quick Demo scenarios — all trigger a review against the running demo-backend.
+// To test specific bug scenarios, set the corresponding flag in infra/.env
+// and restart: BUG_SECURITY=true, BUG_SLOW=true, BUG_PRICE=true.
+// The PR number here is the actual PR you opened in your Gitea shopflow repo.
 const DEMO_SCENARIOS = [
-  { label: '🛒 Normal PR',      repo: 'tuskeradmin/demo-store', pr: 42 },
-  { label: '🔐 Security Bug',   repo: 'tuskeradmin/demo-store', pr: 43 },
-  { label: '⚡ Latency Issue',  repo: 'tuskeradmin/demo-store', pr: 44 },
-  { label: '💰 Pricing Bug',    repo: 'tuskeradmin/demo-store', pr: 45 },
+  { label: '🛒 Normal PR',      repo: 'tusker/shopflow', pr: 1, hint: 'Standard review, no bugs active' },
+  { label: '🔐 Security Bug',   repo: 'tusker/shopflow', pr: 1, hint: 'Set BUG_SECURITY=true in infra/.env first' },
+  { label: '⚡ Latency Issue',  repo: 'tusker/shopflow', pr: 1, hint: 'Set BUG_SLOW=true in infra/.env first' },
+  { label: '💰 Pricing Bug',    repo: 'tusker/shopflow', pr: 1, hint: 'Set BUG_PRICE=true in infra/.env first' },
 ]
 
 export default function ControlPanel({ onStarted }) {
-  const [repo,  setRepo]  = useState('tuskeradmin/demo-store')
-  const [pr,    setPr]    = useState(42)
+  const [repo,  setRepo]  = useState('tusker/shopflow')
+  const [pr,    setPr]    = useState(1)
   const [busy,  setBusy]  = useState(false)
   const [msg,   setMsg]   = useState(null)
 
@@ -60,6 +64,7 @@ export default function ControlPanel({ onStarted }) {
             {DEMO_SCENARIOS.map(s => (
               <button
                 key={s.label}
+                title={s.hint}
                 onClick={() => { setRepo(s.repo); setPr(s.pr); start(s.repo, s.pr) }}
                 disabled={busy}
                 style={{
@@ -75,10 +80,11 @@ export default function ControlPanel({ onStarted }) {
                   fontFamily: 'inherit',
                   transition: 'all 0.1s',
                 }}
-                onMouseEnter={e => { if (!busy) e.target.style.borderColor = '#FACF0E' }}
-                onMouseLeave={e => { e.target.style.borderColor = '#e5e7eb' }}
+                onMouseEnter={e => { if (!busy) e.currentTarget.style.borderColor = '#FACF0E' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = '#e5e7eb' }}
               >
-                {s.label}
+                <div>{s.label}</div>
+                <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{s.hint}</div>
               </button>
             ))}
           </div>
