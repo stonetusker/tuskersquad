@@ -221,6 +221,67 @@ def _llm_finding_or_synthetic(
 
 # Node functions - each returns a partial state dict that LangGraph merges back
 
+def repo_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate repository and PR existence/accessibility.
+    Returns `validator_failed` flag in state when validation fails.
+    """
+    workflow_id = state.get("workflow_id")
+    repository = state.get("repository", "")
+    pr_number = state.get("pr_number", 0)
+    fid = state.get("_fid", 1)
+    start = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "repo_validator"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.repo_validator.repo_validator_agent", "run_repo_validator_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=repository,
+                pr_number=pr_number,
+                fid=fid,
+            )
+            findings = result.get("findings", [])
+            fid = result.get("fid", fid + len(findings))
+            failed = result.get("validator_failed", False)
+            log = result.get("agent_log", {"agent": "repo_validator", "status": "COMPLETED",
+                                           "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()})
+        except Exception as exc:
+            logger.exception("repo_validator_failed")
+            findings = [{
+                "id": fid, "agent": "repo_validator", "severity": "HIGH",
+                "title": "Validator crashed", "description": str(exc),
+                "test_name": "agent_crash",
+            }]
+            fid += 1
+            failed = True
+            log = {"agent": "repo_validator", "status": "FAILED",
+                   "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                   "error": str(exc)}
+    else:
+        findings = [{
+            "id": fid, "agent": "repo_validator", "severity": "HIGH",
+            "title": "Validator missing", "description": "Module not found",
+            "test_name": "agent_missing",
+        }]
+        log = {"agent": "repo_validator", "status": "FAILED",
+               "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()}
+        fid += 1
+        failed = True
+
+    _post_agent_comment_now("repo_validator", findings, state, {"decision": "REJECT" if failed else "PASS",
+                                                                  "summary": "Repository validation failed" if failed else "Repository validated successfully",
+                                                                  "risk_level": "HIGH" if failed else "NONE",
+                                                                  "test_count": len(findings)})
+
+    return {"findings": findings, "agent_logs": [log], "_fid": fid, "validator_failed": failed}
+
+
 def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Fetch the PR diff from the active git provider and populate diff_context
     on the workflow state. Every downstream agent reads diff_context so findings
@@ -444,6 +505,7 @@ def builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
             fid              = result.get("fid", fid + len(findings))
             build_success    = result.get("build_success", False)
             build_artifacts  = result.get("build_artifacts", {})
+            workspace_dir    = result.get("workspace_dir", "")
             log              = result.get("agent_log", {
                 "agent": "builder", "status": "COMPLETED",
                 "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
@@ -456,6 +518,7 @@ def builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "_fid": fid,
                 "build_success": build_success,
                 "build_artifacts": build_artifacts,
+                "workspace_dir": workspace_dir,
             }
         except Exception as exc:
             logger.exception("builder_agent_failed")
@@ -578,6 +641,7 @@ def tester_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 repository=state.get("repository", ""),
                 pr_number=state.get("pr_number", 0),
                 deploy_url=state.get("deploy_url", ""),
+                workspace_dir=state.get("workspace_dir", ""),
                 fid=fid,
             )
             findings         = result.get("findings", [])
@@ -694,6 +758,160 @@ def runtime_analyzer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             }],
             "_fid": fid + 1,
         }
+
+
+def api_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate important REST endpoints after deployment."""
+    workflow_id = state.get("workflow_id")
+    fid = state.get("_fid", 1)
+    start = datetime.utcnow()
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "api_validator"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.api_validator.api_validator_agent", "run_api_validator_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                deploy_url=state.get("deploy_url", ""),
+                fid=fid,
+            )
+            findings = result.get("findings", [])
+            fid = result.get("fid", fid + len(findings))
+            log = result.get("agent_log", {"agent": "api_validator", "status": "COMPLETED",
+                                           "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()})
+            _post_agent_comment_now("api_validator", findings, state)
+            return {"findings": findings, "agent_logs": [log], "_fid": fid}
+        except Exception as exc:
+            logger.exception("api_validator_failed")
+            return {"findings": [{
+                        "id": fid, "agent": "api_validator", "severity": "HIGH",
+                        "title": "API validator crashed", "description": str(exc),
+                        "test_name": "agent_crash",
+                    }],
+                    "agent_logs": [{"agent": "api_validator","status": "FAILED",
+                                     "started_at": start.isoformat(),
+                                     "completed_at": datetime.utcnow().isoformat(),
+                                     "error": str(exc)}],
+                    "_fid": fid + 1}
+    else:
+        return {"findings": [{
+                    "id": fid, "agent": "api_validator", "severity": "HIGH",
+                    "title": "API validator not available", "description": "Module missing",
+                    "test_name": "agent_missing",
+                }],
+                "agent_logs": [{"agent": "api_validator","status": "FAILED",
+                                 "started_at": start.isoformat(),
+                                 "completed_at": datetime.utcnow().isoformat()}],
+                "_fid": fid + 1}
+
+
+def security_runtime_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Scan built image for security issues."""
+    workflow_id = state.get("workflow_id")
+    fid = state.get("_fid", 1)
+    start = datetime.utcnow()
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "security_runtime"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.security_runtime.security_runtime_agent", "run_security_runtime_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                build_artifacts=state.get("build_artifacts", {}),
+                fid=fid,
+            )
+            findings = result.get("findings", [])
+            fid = result.get("fid", fid + len(findings))
+            log = result.get("agent_log", {"agent": "security_runtime", "status": "COMPLETED",
+                                           "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()})
+            _post_agent_comment_now("security_runtime", findings, state)
+            return {"findings": findings, "agent_logs": [log], "_fid": fid}
+        except Exception as exc:
+            logger.exception("security_runtime_failed")
+            return {"findings": [{
+                        "id": fid, "agent": "security_runtime", "severity": "HIGH",
+                        "title": "Security runtime agent crashed", "description": str(exc),
+                        "test_name": "agent_crash",
+                    }],
+                    "agent_logs": [{"agent": "security_runtime","status": "FAILED",
+                                     "started_at": start.isoformat(),
+                                     "completed_at": datetime.utcnow().isoformat(),
+                                     "error": str(exc)}],
+                    "_fid": fid + 1}
+    else:
+        return {"findings": [{
+                    "id": fid, "agent": "security_runtime", "severity": "HIGH",
+                    "title": "Security runtime agent not available", "description": "Module missing",
+                    "test_name": "agent_missing",
+                }],
+                "agent_logs": [{"agent": "security_runtime","status": "FAILED",
+                                 "started_at": start.isoformat(),
+                                 "completed_at": datetime.utcnow().isoformat()}],
+                "_fid": fid + 1}
+
+
+def cleanup_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Tear down PR container and workspace."""
+    workflow_id = state.get("workflow_id")
+    fid = state.get("_fid", 1)
+    start = datetime.utcnow()
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "cleanup"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.cleanup.cleanup_agent", "run_cleanup_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                container_name=state.get("container_name", ""),
+                workspace_dir=state.get("workspace_dir", ""),
+                fid=fid,
+            )
+            findings = result.get("findings", [])
+            fid = result.get("fid", fid + len(findings))
+            log = result.get("agent_log", {"agent": "cleanup", "status": "COMPLETED",
+                                           "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()})
+            _post_agent_comment_now("cleanup", findings, state)
+            return {"findings": findings, "agent_logs": [log], "_fid": fid}
+        except Exception as exc:
+            logger.exception("cleanup_failed")
+            return {"findings": [{
+                        "id": fid, "agent": "cleanup", "severity": "HIGH",
+                        "title": "Cleanup agent crashed", "description": str(exc),
+                        "test_name": "agent_crash",
+                    }],
+                    "agent_logs": [{"agent": "cleanup","status": "FAILED",
+                                     "started_at": start.isoformat(),
+                                     "completed_at": datetime.utcnow().isoformat(),
+                                     "error": str(exc)}],
+                    "_fid": fid + 1}
+    else:
+        return {"findings": [{
+                    "id": fid, "agent": "cleanup", "severity": "HIGH",
+                    "title": "Cleanup agent not available", "description": "Module missing",
+                    "test_name": "agent_missing",
+                }],
+                "agent_logs": [{"agent": "cleanup","status": "FAILED",
+                                 "started_at": start.isoformat(),
+                                 "completed_at": datetime.utcnow().isoformat()}],
+                "_fid": fid + 1}
 
 
 def log_inspector_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -970,6 +1188,7 @@ def judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 challenges=challenges,
                 qa_summary=qa_summary,
                 risk_level=risk_level,
+                runtime_analysis=state.get("analysis_results", {}),
             )
             decision = result.get("decision", "REVIEW_REQUIRED")
             rationale = result.get("rationale", "")
@@ -1084,6 +1303,13 @@ def human_approval_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 # Edge routing functions
 
+def route_after_validator(state: Dict[str, Any]) -> str:
+    """Route after repo validation node. Failures go to END to abort the workflow."""
+    if state.get("validator_failed"):
+        return "end"
+    return "planner"
+
+
 def route_after_judge(state: Dict[str, Any]) -> str:
     """Route after judge: APPROVE/REJECT go to END, REVIEW_REQUIRED goes to human_approval."""
     decision = (state.get("decision") or "REVIEW_REQUIRED").upper()
@@ -1120,6 +1346,7 @@ def build_graph():
         builder = StateGraph(TuskerState)
 
         # Register nodes
+        builder.add_node("repo_validator", repo_validator_node)
         builder.add_node("planner",       planner_node)
         builder.add_node("backend",       backend_node)
         builder.add_node("frontend",      frontend_node)
@@ -1128,18 +1355,28 @@ def build_graph():
         builder.add_node("builder",       builder_node)
         builder.add_node("deployer",      deployer_node)
         builder.add_node("tester",        tester_node)
+        builder.add_node("api_validator", api_validator_node)
+        builder.add_node("security_runtime", security_runtime_node)
         builder.add_node("runtime_analyzer", runtime_analyzer_node)
         builder.add_node("log_inspector", log_inspector_node)   # reads microservice logs
         builder.add_node("correlator",    correlator_node)      # joins all findings into root cause chains
         builder.add_node("challenger",    challenger_node)
         builder.add_node("qa_lead",       qa_lead_node)
         builder.add_node("judge",         judge_node)
+        builder.add_node("cleanup",       cleanup_node)
         builder.add_node("human_approval", human_approval_node)
 
         # Pipeline edges:
         # Client-side agents run first, then server-side log inspector,
         # then correlator joins everything before challenger/qa_lead/judge.
-        builder.add_edge(START,          "planner")
+        # start with repository validation
+        builder.add_edge(START, "repo_validator")
+        # after validation either planner or end
+        builder.add_conditional_edges(
+            "repo_validator",
+            route_after_validator,
+            {"planner": "planner", "end": END},
+        )
         builder.add_edge("planner",      "backend")
         builder.add_edge("backend",      "frontend")
         builder.add_edge("frontend",     "security")
@@ -1147,21 +1384,21 @@ def build_graph():
         builder.add_edge("sre",          "builder")
         builder.add_edge("builder",      "deployer")
         builder.add_edge("deployer",     "tester")
-        builder.add_edge("tester",       "runtime_analyzer")
+        builder.add_edge("tester",       "api_validator")
+        builder.add_edge("api_validator","security_runtime")
+        builder.add_edge("security_runtime", "runtime_analyzer")
         builder.add_edge("runtime_analyzer", "log_inspector")  # log inspector runs after runtime analysis
         builder.add_edge("log_inspector","correlator")     # correlator joins client and server findings
         builder.add_edge("correlator",   "challenger")
         builder.add_edge("challenger",   "qa_lead")
         builder.add_edge("qa_lead",      "judge")
-
-        # Conditional: judge → human_approval or END
+        # always clean up after judge (whether approved or not)
+        builder.add_edge("judge",        "cleanup")
+        # after cleanup, follow judge decision rules (approve/reject end, review_required -> human approval)
         builder.add_conditional_edges(
-            "judge",
+            "cleanup",
             route_after_judge,
-            {
-                "end": END,
-                "human_approval": "human_approval",
-            },
+            {"end": END, "human_approval": "human_approval"},
         )
 
         # Conditional: human_approval → planner (retest) or END

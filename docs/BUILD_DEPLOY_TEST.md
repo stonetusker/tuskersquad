@@ -89,8 +89,17 @@ The Runtime Analyzer examines the live application:
 
 1. **Log Analysis**: Retrieves and analyzes container logs for errors and warnings
 2. **Performance Correlation**: Correlates test results with runtime metrics
-3. **Resource Monitoring**: Checks CPU, memory, and network usage
+3. **Resource Monitoring**: Checks CPU, memory, and network usage (sampling via `docker stats`)
 4. **Failure Pattern Detection**: Identifies common failure modes
+
+### Runtime Metric Thresholds
+The runtime analyzer compares container stats against configurable thresholds. You can adjust these via environment variables in the LangGraph API service:
+
+```bash
+CPU_THRESHOLD=80    # percent CPU utilization considered problematic
+MEM_THRESHOLD=80    # percent memory usage considered problematic
+```
+Findings are generated when these limits are exceeded, making high‑resource deployments easier to detect.
 
 ### Analysis Outputs
 

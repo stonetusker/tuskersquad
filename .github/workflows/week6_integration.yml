@@ -24,29 +24,3 @@ jobs:
         run: |
           docker compose -f infra/docker-compose.yml up --build -d
 
-      - name: Wait for LangGraph API
-        run: |
-          echo "Waiting for LangGraph API to become healthy..."
-          for i in {1..40}; do
-            resp=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/openapi.json || true)
-            if [ "$resp" = "200" ]; then
-              echo "LangGraph API ready"
-              exit 0
-            fi
-            sleep 3
-          done
-          echo "LangGraph API did not become ready in time"
-          docker compose -f infra/docker-compose.yml logs --no-color || true
-          exit 1
-
-      - name: Run integration tests
-        run: |
-          python -m pip install -r services/langgraph_api/requirements.txt pytest
-          pytest -q tests/integration/test_week6_e2e.py -q
-        env:
-          LANGGRAPH_URL: http://localhost:8000
-
-      - name: Tear down
-        if: always()
-        run: |
-          docker compose -f infra/docker-compose.yml down

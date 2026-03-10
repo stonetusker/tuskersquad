@@ -160,17 +160,57 @@ def run_runtime_analyzer_agent(
         try:
             # Get container stats
             if container_name:
-                stats_cmd = ["docker", "stats", "--no-stream", "--format", "json", container_name]
+                # support JSON output and a numeric interpretation
+                stats_cmd = ["docker", "stats", "--no-stream", "--format", "{{json .}}", container_name]
                 stats_result = subprocess.run(stats_cmd, capture_output=True, text=True, timeout=10)
+
+                cpu_threshold = float(os.getenv("CPU_THRESHOLD", "80"))
+                mem_threshold = float(os.getenv("MEM_THRESHOLD", "80"))
 
                 if stats_result.returncode == 0:
                     try:
-                        stats = json.loads(stats_result.stdout)
+                        stats = json.loads(stats_result.stdout.strip())
+                        # parse percentage strings into floats
+                        cpu_str = stats.get("CPUPerc", "0%").strip().strip("%")
+                        mem_str = stats.get("MemPerc", "0%").strip().strip("%")
+                        try:
+                            cpu_val = float(cpu_str)
+                        except ValueError:
+                            cpu_val = 0.0
+                        try:
+                            mem_val = float(mem_str)
+                        except ValueError:
+                            mem_val = 0.0
+
                         analysis_results["container_stats"] = {
-                            "cpu_percent": stats.get("CPUPerc", "0%"),
+                            "cpu_percent": cpu_val,
                             "memory_usage": stats.get("MemUsage", "unknown"),
-                            "memory_percent": stats.get("MemPerc", "0%"),
+                            "memory_percent": mem_val,
                         }
+
+                        # threshold-based findings
+                        if cpu_val > cpu_threshold:
+                            findings.append({
+                                "id": fid,
+                                "agent": "runtime_analyzer",
+                                "severity": "MEDIUM",
+                                "title": "High CPU usage",
+                                "description": f"Container CPU at {cpu_val:.1f}% exceeds threshold {cpu_threshold}%",
+                                "test_name": "cpu_usage",
+                            })
+                            fid += 1
+
+                        if mem_val > mem_threshold:
+                            findings.append({
+                                "id": fid,
+                                "agent": "runtime_analyzer",
+                                "severity": "MEDIUM",
+                                "title": "High memory usage",
+                                "description": f"Container memory at {mem_val:.1f}% exceeds threshold {mem_threshold}%",
+                                "test_name": "memory_usage",
+                            })
+                            fid += 1
+
                     except json.JSONDecodeError:
                         pass
         except Exception:

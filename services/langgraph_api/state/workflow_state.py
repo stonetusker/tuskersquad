@@ -93,4 +93,7 @@ except ImportError:
         human_reason: Optional[str]
         release_decision: Optional[str]
         release_reason: Optional[str]
+        validator_failed: bool
+        workspace_dir: str
+        container_name: str
         _fid: int

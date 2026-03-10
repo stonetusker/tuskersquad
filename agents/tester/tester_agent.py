@@ -19,6 +19,7 @@ def run_tester_agent(
     repository: str,
     pr_number: int,
     deploy_url: str = "",
+    workspace_dir: str = "",
     fid: int = 1,
 ) -> Dict[str, Any]:
     """
@@ -54,8 +55,9 @@ def run_tester_agent(
                 "test_results": test_results,
             }
 
-        # Basic health check
-        health_cmd = ["curl", "-f", "-s", "--max-time", "10", f"{deploy_url}/health"]
+        # Configurable health check
+        health_endpoint = os.getenv("HEALTH_ENDPOINT", "/health")
+        health_cmd = ["curl", "-f", "-s", "--max-time", "10", f"{deploy_url}{health_endpoint}"]
         health_result = subprocess.run(health_cmd, capture_output=True, text=True, timeout=15)
 
         if health_result.returncode != 0:
@@ -64,7 +66,7 @@ def run_tester_agent(
                 "agent": "tester",
                 "severity": "HIGH",
                 "title": "Application health check failed",
-                "description": f"Health endpoint not responding at {deploy_url}/health",
+                "description": f"Health endpoint not responding at {deploy_url}{health_endpoint}",
                 "test_name": "health_check",
             })
             fid += 1
@@ -74,10 +76,62 @@ def run_tester_agent(
                 "agent": "tester",
                 "severity": "LOW",
                 "title": "Application health check passed",
-                "description": f"Health endpoint responding correctly at {deploy_url}",
+                "description": f"Health endpoint responding correctly at {deploy_url}{health_endpoint}",
                 "test_name": "health_check",
             })
             fid += 1
+
+            # Check if this is a Python project with tests
+            has_python_tests = False
+            if workspace_dir and os.path.exists(workspace_dir):
+                # Look for test directories or pytest config
+                test_dirs = ["tests", "test"]
+                pytest_files = ["pytest.ini", "pyproject.toml", "setup.cfg"]
+                for d in test_dirs:
+                    if os.path.exists(os.path.join(workspace_dir, d)):
+                        has_python_tests = True
+                        break
+                for f in pytest_files:
+                    if os.path.exists(os.path.join(workspace_dir, f)):
+                        has_python_tests = True
+                        break
+
+            if has_python_tests and workspace_dir:
+                # Run pytest against the deployed app
+                pytest_cmd = ["pytest", "--tb=short", "--maxfail=5", "-q"]
+                # Assume tests are configured to hit the deploy_url
+                env = os.environ.copy()
+                env["TEST_BASE_URL"] = deploy_url
+                pytest_result = subprocess.run(pytest_cmd, cwd=workspace_dir, env=env,
+                                             capture_output=True, text=True, timeout=300)
+
+                test_results["pytest"] = {
+                    "returncode": pytest_result.returncode,
+                    "stdout": pytest_result.stdout,
+                    "stderr": pytest_result.stderr,
+                }
+
+                if pytest_result.returncode == 0:
+                    findings.append({
+                        "id": fid,
+                        "agent": "tester",
+                        "severity": "LOW",
+                        "title": "Python tests passed",
+                        "description": "All pytest tests completed successfully",
+                        "test_name": "pytest_tests",
+                    })
+                    fid += 1
+                else:
+                    findings.append({
+                        "id": fid,
+                        "agent": "tester",
+                        "severity": "HIGH",
+                        "title": "Python tests failed",
+                        "description": f"pytest failed with exit code {pytest_result.returncode}",
+                        "test_name": "pytest_tests",
+                    })
+                    fid += 1
+                    test_success = False  # Override if pytest fails
 
             # API endpoint tests
             api_tests = [

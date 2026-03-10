@@ -44,6 +44,7 @@ def _rule_based_decision(
     findings: List[Dict],
     challenges: List[Dict],
     risk_level: str,
+    runtime_analysis: Dict = None,
 ) -> str:
     """
     Deterministic rule-based fallback.
@@ -52,8 +53,9 @@ def _rule_based_decision(
       1. Any HIGH severity finding → REVIEW_REQUIRED
       2. QA Lead risk_level == HIGH → REVIEW_REQUIRED
       3. Active challenger disputes > 0 → REVIEW_REQUIRED
-      4. MEDIUM findings > 1 → REVIEW_REQUIRED
-      5. Otherwise → APPROVE
+      4. Runtime health issues (high CPU/memory, unhealthy status) → REVIEW_REQUIRED
+      5. MEDIUM findings > 1 → REVIEW_REQUIRED
+      6. Otherwise → APPROVE
     """
     high = [f for f in findings if _severity_rank(f.get("severity")) == 3]
     if high:
@@ -64,6 +66,23 @@ def _rule_based_decision(
 
     if len(challenges) > 0:
         return "REVIEW_REQUIRED"
+
+    # Check runtime analysis for health issues
+    if runtime_analysis:
+        runtime_health = runtime_analysis.get("runtime_health", {})
+        if not runtime_health.get("healthy", True):
+            return "REVIEW_REQUIRED"
+
+        # Check container stats for resource issues
+        container_stats = runtime_analysis.get("container_stats", {})
+        cpu_percent = container_stats.get("cpu_percent", 0)
+        mem_percent = container_stats.get("memory_percent", 0)
+
+        cpu_threshold = float(os.getenv("CPU_THRESHOLD", "80"))
+        mem_threshold = float(os.getenv("MEM_THRESHOLD", "80"))
+
+        if cpu_percent > cpu_threshold or mem_percent > mem_threshold:
+            return "REVIEW_REQUIRED"
 
     med = [f for f in findings if _severity_rank(f.get("severity")) == 2]
     if len(med) > 1:
@@ -76,6 +95,7 @@ async def _llm_decision(
     findings: List[Dict],
     challenges: List[Dict],
     qa_summary: str,
+    runtime_analysis: Dict = None,
     workflow_id: str = None,
 ) -> Optional[str]:
     """Ask the LLM judge for a decision. Returns raw response text or None."""
@@ -100,6 +120,12 @@ async def _llm_decision(
             or "None"
         )
 
+        runtime_text = ""
+        if runtime_analysis:
+            runtime_health = runtime_analysis.get("runtime_health", {})
+            container_stats = runtime_analysis.get("container_stats", {})
+            runtime_text = f"\nRuntime Analysis:\n- Health Status: {'Healthy' if runtime_health.get('healthy', True) else 'Unhealthy'}\n- High Priority Issues: {runtime_health.get('high_priority_issues', 0)}\n- CPU Usage: {container_stats.get('cpu_percent', 'N/A')}%\n- Memory Usage: {container_stats.get('memory_percent', 'N/A')}%\n"
+
         prompt = (
             "You are the Judge agent for a CI/CD governance system.\n"
             "Review the following and respond with exactly one word: "
@@ -107,6 +133,7 @@ async def _llm_decision(
             f"QA Summary:\n{qa_summary[:600]}\n\n"
             f"Findings:\n{findings_text}\n\n"
             f"Challenger disputes:\n{challenge_text}\n\n"
+            f"{runtime_text}"
             "Decision (APPROVE / REJECT / REVIEW_REQUIRED):"
         )
 
@@ -140,6 +167,7 @@ def run_judge_agent(
     challenges: List[Dict],
     qa_summary: str,
     risk_level: str,
+    runtime_analysis: Dict = None,
 ) -> Dict[str, Any]:
     """
     Main entry point called by the graph runner.
@@ -152,7 +180,7 @@ def run_judge_agent(
     llm_response = None
     try:
         llm_response = _run_async(
-            _llm_decision(findings, challenges, qa_summary,
+            _llm_decision(findings, challenges, qa_summary, runtime_analysis,
                          workflow_id=str(workflow_id) if workflow_id else None)
         )
     except RuntimeError:
@@ -166,7 +194,7 @@ def run_judge_agent(
         rationale = llm_response
 
     if decision is None:
-        decision = _rule_based_decision(findings, challenges, risk_level)
+        decision = _rule_based_decision(findings, challenges, risk_level, runtime_analysis)
         rationale = (
             f"Rule-based decision: {decision}. "
             f"Findings: {len(findings)} total, "
@@ -175,6 +203,16 @@ def run_judge_agent(
             f"Challenges: {len(challenges)}. "
             f"QA risk level: {risk_level}."
         )
+
+        # Add runtime analysis info to rationale if available
+        if runtime_analysis:
+            runtime_health = runtime_analysis.get("runtime_health", {})
+            container_stats = runtime_analysis.get("container_stats", {})
+            rationale += (
+                f" Runtime health: {'healthy' if runtime_health.get('healthy', True) else 'unhealthy'}. "
+                f"CPU: {container_stats.get('cpu_percent', 'N/A')}%, "
+                f"Memory: {container_stats.get('memory_percent', 'N/A')}%."
+            )
 
     logger.info(
         "judge_decision",

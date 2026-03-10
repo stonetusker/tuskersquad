@@ -185,6 +185,14 @@ def _persist_results(
         except Exception:
             logger.exception("failed_to_save_qa_summary")
 
+    # Persist analysis results if provided (log anomalies, metrics etc)
+    analysis = result.get("analysis_results")
+    if analysis is not None:
+        try:
+            workflow_repo.update_analysis_results(workflow_id, analysis)
+        except Exception:
+            logger.exception("failed_to_save_analysis_results")
+
     # Challenges
     for ch in result.get("challenges", []):
         try:
@@ -334,11 +342,15 @@ def execute_workflow(workflow_id: str) -> None:
         risk_level = result.get("risk_level", "LOW")
         diff_context = result.get("diff_context", {})
 
-        # Store agent_decisions and diff_context in registry for UI
+        # Store important state in registry for UI (including metrics)
         _update_registry(workflow_id, "RUNNING", rationale, qa_summary, risk_level,
                          extra={
                              "agent_decisions": agent_decisions,
                              "git_provider": git_provider,
+                             "analysis_results": result.get("analysis_results", {}),
+                             "deploy_url": result.get("deploy_url"),
+                             "container_name": result.get("container_name"),
+                             "workspace_dir": result.get("workspace_dir"),
                              "diff_context": {
                                  k: v for k, v in diff_context.items()
                                  if k != "_changed_lines_by_file"  # too large for registry
@@ -408,6 +420,15 @@ def resume_workflow_with_decision(workflow_id: str, decision: str, reason: str =
             if decision.upper() == "RETEST":
                 _persist_results(db, workflow_id, result, wf_repo, f_repo, gov_repo,
                                  al_repo, ch_repo, qa_repo, ad_repo)
+                # also update registry with any new analysis results
+                try:
+                    _update_registry(workflow_id, "RUNNING", result.get("rationale", ""),
+                                     result.get("qa_summary", ""), result.get("risk_level", "LOW"),
+                                     extra={
+                                         "analysis_results": result.get("analysis_results", {}),
+                                     })
+                except Exception:
+                    pass
 
             final = result.get("human_decision", decision).upper()
             if final in ("APPROVE", "REJECT"):
