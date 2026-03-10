@@ -59,6 +59,7 @@ services:
     environment:
       GITEA__actions__ENABLED: "true"
       GITEA__webhook__ALLOWED_HOST_LIST: "*"
+      GITEA__security__ALLOW_LOCALNETWORKS: "true"
       GITEA__security__INSTALL_LOCK: "true"
       GITEA__database__DB_TYPE: "sqlite3"
       GITEA__database__PATH: "/data/gitea/gitea.db"
