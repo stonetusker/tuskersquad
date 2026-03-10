@@ -32,16 +32,18 @@ def _run_playwright() -> Dict[str, Any]:
     }
 
     try:
-        cmd = [
-            "python", "-m", "pytest",
-            PLAYWRIGHT_TEST_DIR,
-            "--tb=short",
-            "-q",
-            "--no-header",
-        ]
-
         env = os.environ.copy()
         env["BASE_URL"] = DEMO_FRONTEND_URL
+
+        # Build the test command based on the configured frontend test tool.
+        tool = FRONTEND_TEST_TOOL.lower()
+        if tool == "cypress":
+            cmd = ["npx", "cypress", "run", "--spec", PLAYWRIGHT_TEST_DIR]
+        elif tool == "selenium":
+            cmd = ["python", "-m", "pytest", PLAYWRIGHT_TEST_DIR, "--tb=short", "-q", "--no-header"]
+        else:
+            # Default: playwright via pytest-playwright
+            cmd = ["python", "-m", "pytest", PLAYWRIGHT_TEST_DIR, "--tb=short", "-q", "--no-header"]
 
         proc = subprocess.run(
             cmd,
@@ -74,9 +76,9 @@ def _run_playwright() -> Dict[str, Any]:
     except FileNotFoundError:
         result["output"] = f"{FRONTEND_TEST_TOOL} not found (install it or change FRONTEND_TEST_TOOL)"
     except subprocess.TimeoutExpired:
-        result["output"] = "Playwright tests timed out after 120s"
+        result["output"] = f"{FRONTEND_TEST_TOOL} tests timed out after 120s"
     except Exception as exc:
-        result["output"] = f"Playwright execution error: {exc}"
+        result["output"] = f"{FRONTEND_TEST_TOOL} execution error: {exc}"
 
     return result
 
@@ -141,7 +143,7 @@ def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: i
                 "workflow_id": workflow_id,
                 "agent": "frontend",
                 "severity": "HIGH",
-                "title": f"frontend - {pw_result['failed']} Playwright test(s) failed",
+                "title": f"frontend - {pw_result['failed']} {FRONTEND_TEST_TOOL} test(s) failed",
                 "description": (
                     f"{pw_result['failed']} UI test(s) failed. "
                     f"Output: {pw_result['output'][:400]}"
@@ -156,7 +158,7 @@ def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: i
                 "workflow_id": workflow_id,
                 "agent": "frontend",
                 "severity": "LOW",
-                "title": f"frontend - all Playwright flows passed",
+                "title": f"frontend - all {FRONTEND_TEST_TOOL} flows passed",
                 "description": "Login, Checkout, and Order flows all completed successfully.",
                 "test_name": f"{FRONTEND_TEST_TOOL}_suite",
                 "created_at": now,

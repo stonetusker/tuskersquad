@@ -1,0 +1,19 @@
+# ── TuskerSquad: ShopFlow Catalog Microservice ─────────────────────────────────
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir --upgrade pip==24.3.1
+
+COPY apps/catalog_service/requirements.txt /tmp/req.txt
+RUN pip install --no-cache-dir -r /tmp/req.txt
+
+COPY apps/__init__.py      /app/apps/__init__.py
+COPY apps/catalog_service/ /app/apps/catalog_service/
+
+ENV PYTHONPATH=/app
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
+  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=4)"
+
+CMD ["uvicorn", "apps.catalog_service.main:app", "--host", "0.0.0.0", "--port", "8081"]

@@ -53,24 +53,28 @@ _DECISION_ICON = {
 }
 _SEV_ICON     = {"HIGH": "[HIGH]", "MEDIUM": "[MEDIUM]", "LOW": "[LOW]", "NONE": ""}
 _AGENT_ICON   = {
-    "planner":   "",
-    "backend":   "",
-    "frontend":  "",
-    "security":  "",
-    "sre":       "",
-    "challenger":"",
-    "qa_lead":   "",
-    "judge":     "",
+    "planner":       "",
+    "backend":       "",
+    "frontend":      "",
+    "security":      "",
+    "sre":           "",
+    "log_inspector": "",
+    "correlator":    "",
+    "challenger":    "",
+    "qa_lead":       "",
+    "judge":         "",
 }
 _AGENT_LABEL  = {
-    "planner":   "Planner Agent",
-    "backend":   "Backend Engineer",
-    "frontend":  "Frontend Engineer",
-    "security":  "Security Engineer",
-    "sre":       "SRE / Performance",
-    "challenger":"Challenger Agent",
-    "qa_lead":   "QA Lead",
-    "judge":     "Judge Agent",
+    "planner":       "Planner Agent",
+    "backend":       "Backend Engineer",
+    "frontend":      "Frontend Engineer",
+    "security":      "Security Engineer",
+    "sre":           "SRE / Performance",
+    "log_inspector": "Log Inspector (Server-Side)",
+    "correlator":    "Correlator / Root Cause Analyst",
+    "challenger":    "Challenger Agent",
+    "qa_lead":       "QA Lead",
+    "judge":         "Judge Agent",
 }
 
 
@@ -86,23 +90,22 @@ def _agent_section(
     agent_decision: {decision, summary, risk_level, test_count}
     findings: list of {agent, severity, title, description}
     """
-    icon  = _AGENT_ICON.get(agent, "🤖")
     label = _AGENT_LABEL.get(agent, agent.replace("_", " ").title())
     my_findings = [f for f in findings if f.get("agent") == agent]
 
     if agent_decision:
         d         = agent_decision.get("decision", "PASS")
-        di        = _DECISION_ICON.get(d, "⚪")
+        di        = _DECISION_ICON.get(d, "[UNKNOWN]")
         risk      = agent_decision.get("risk_level", "LOW")
-        ri        = _SEV_ICON.get(risk, "⚪")
+        ri        = _SEV_ICON.get(risk, "")
         tests     = agent_decision.get("test_count", len(my_findings))
         summary   = (agent_decision.get("summary") or "").strip()
     else:
         d       = "FLAG" if my_findings else "PASS"
-        di      = _DECISION_ICON.get(d, "⚪")
+        di      = _DECISION_ICON.get(d, "[UNKNOWN]")
         risk    = "HIGH" if any(f.get("severity") == "HIGH" for f in my_findings) else \
                   "MEDIUM" if my_findings else "NONE"
-        ri      = _SEV_ICON.get(risk, "⚪")
+        ri      = _SEV_ICON.get(risk, "")
         tests   = len(my_findings)
         summary = ""
 
@@ -118,7 +121,7 @@ def _agent_section(
         lines.append("")
         for f in my_findings[:8]:
             sev = f.get("severity", "LOW")
-            si  = _SEV_ICON.get(sev, sev)
+            si = _SEV_ICON.get(sev, sev)
             desc = (f.get("description") or "")[:160]
             lines.append(f"- **{si}** {f.get('title', '?')} — {desc}")
         if len(my_findings) > 8:
@@ -140,13 +143,14 @@ def build_initial_review_comment(
     risk_level:  str = "",
     rationale:   str = "",
     agent_decisions: Optional[dict] = None,   # {agent_name: {decision, summary, risk_level, test_count}}
+    developer_brief: str = "",                # from correlator agent — cross-layer RCA
 ) -> str:
     """
     Build the rich initial PR comment posted when the pipeline completes.
-    Includes a section for every agent with their individual decision.
+    Includes cross-layer root cause analysis from the correlator agent.
     """
     icon  = _DECISION_ICON.get(decision, "[UNKNOWN]")
-    ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ts   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     risk_icon = _SEV_ICON.get(risk_level, "")
 
     lines = [
@@ -154,6 +158,13 @@ def build_initial_review_comment(
         f"> Workflow `{workflow_id[:8]}` · {ts} · Overall Risk: {risk_icon} `{risk_level or 'UNKNOWN'}`",
         "",
     ]
+
+    # Root cause analysis brief from correlator (the most important section for developers)
+    if developer_brief:
+        lines += [
+            developer_brief[:2000],
+            "",
+        ]
 
     # QA Lead summary box
     if qa_summary:
@@ -177,7 +188,8 @@ def build_initial_review_comment(
         ]
 
     # Per-agent breakdown
-    PIPELINE_ORDER = ["planner", "backend", "frontend", "security", "sre", "challenger", "qa_lead", "judge"]
+    PIPELINE_ORDER = ["planner", "backend", "frontend", "security", "sre",
+                      "log_inspector", "correlator", "challenger", "qa_lead", "judge"]
     lines += [
         "---",
         "### Agent Findings",
@@ -205,7 +217,7 @@ def build_initial_review_comment(
 
     lines += [
         "---",
-        f"*TuskerSquad review — workflow `{workflow_id[:8]}` · {ts}*",
+        f"*TuskerSquad full-stack review — workflow `{workflow_id[:8]}` · {ts}*",
     ]
     return "\n".join(lines)
 
@@ -222,7 +234,7 @@ def build_governance_comment(
 ) -> str:
     """Compact governance decision comment (approve/reject/override)."""
     icon  = _DECISION_ICON.get(decision, "[UNKNOWN]")
-    ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ts   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     label = "Release Manager Override" if is_release else "Human Governance Decision"
 
     lines = [

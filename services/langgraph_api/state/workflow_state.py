@@ -28,6 +28,14 @@ try:
         findings: Annotated[List[Dict[str, Any]], _append]
         challenges: Annotated[List[Dict[str, Any]], _append]
         agent_logs: Annotated[List[Dict[str, Any]], _append]
+        # ── Cross-agent communication ──────────────────────────────────────────
+        # bus_observations: every agent can post observations here; later agents read all of them.
+        # Models the real-world QA process: client tester + server log inspector share evidence.
+        bus_observations: Annotated[List[Dict[str, Any]], _append]
+        # ── Root cause analysis output (set by correlator agent) ───────────────
+        root_cause_chains: List[Dict[str, Any]]
+        developer_brief: str
+        # ── Synthesis ─────────────────────────────────────────────────────────
         qa_summary: str
         risk_level: str
         decision: str
@@ -49,6 +57,9 @@ except ImportError:
         findings: List[Dict[str, Any]]
         challenges: List[Dict[str, Any]]
         agent_logs: List[Dict[str, Any]]
+        bus_observations: List[Dict[str, Any]]
+        root_cause_chains: List[Dict[str, Any]]
+        developer_brief: str
         qa_summary: str
         risk_level: str
         decision: str

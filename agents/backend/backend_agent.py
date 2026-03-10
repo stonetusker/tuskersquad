@@ -26,7 +26,16 @@ def _run_pytest(test_dir: str, base_url: str) -> Dict[str, Any]:
         env = os.environ.copy()
         env["BASE_URL"] = base_url  # tests read from env, not --base-url flag
 
-        cmd = ["python", "-m", "pytest", test_dir, "--tb=short", "-q", "--no-header"]
+        # Build the test command based on the configured tool.
+        # pytest is the default; unittest and nose2 also supported.
+        tool = BACKEND_TEST_TOOL.lower()
+        if tool == "unittest":
+            cmd = ["python", "-m", "unittest", "discover", "-s", test_dir, "-v"]
+        elif tool == "nose2":
+            cmd = ["python", "-m", "nose2", "--with-result-reporter", test_dir]
+        else:
+            # Default: pytest (covers both "pytest" and unknown values)
+            cmd = ["python", "-m", "pytest", test_dir, "--tb=short", "-q", "--no-header"]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
         result["output"] = (proc.stdout + proc.stderr)[:2000]
         result["ran"] = True
@@ -47,11 +56,11 @@ def _run_pytest(test_dir: str, base_url: str) -> Dict[str, Any]:
                         pass
 
     except FileNotFoundError:
-        result["output"] = "pytest not found"
+        result["output"] = f"{BACKEND_TEST_TOOL} not found — install it or change BACKEND_TEST_TOOL in infra/.env"
     except subprocess.TimeoutExpired:
-        result["output"] = "pytest timed out"
+        result["output"] = f"{BACKEND_TEST_TOOL} run timed out after 60s"
     except Exception as exc:
-        result["output"] = f"pytest error: {exc}"
+        result["output"] = f"{BACKEND_TEST_TOOL} error: {exc}"
 
     return result
 

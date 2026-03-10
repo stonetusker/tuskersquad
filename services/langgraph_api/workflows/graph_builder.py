@@ -3,39 +3,46 @@ TuskerSquad Graph Builder
 =========================
 Builds the LangGraph StateGraph for multi-agent PR review.
 
-Graph topology
---------------
+Graph topology  (full-stack multi-service review)
+-------------------------------------------------
 
   START
     │
     ▼
   planner_node
     │
-    ▼
-  backend_node ──────┐
-    │                │
-  frontend_node      │  (parallel in future; serial now for M3 memory)
-    │                │
-  security_node      │
-    │                │
-  sre_node ──────────┘
-    │
-    ▼
-  challenger_node
-    │
-    ▼
-  qa_lead_node
-    │
-    ▼
-  judge_node
-    │
-    ├── "APPROVE"  ──────────── END
-    ├── "REJECT"   ──────────── END
-    └── "REVIEW_REQUIRED" ──▶  human_approval_node  (interrupt)
-                                      │
-                                      ├── human_decision == "APPROVE" ─▶ END
-                                      ├── human_decision == "REJECT"  ─▶ END
-                                      └── human_decision == "RETEST"  ─▶ planner_node
+    ├──────────────────────────────────────────────────────────┐
+    ▼                                                          ▼
+  backend_node   ←─ tests API endpoints                  log_inspector_node  ←─ reads /logs/events
+  frontend_node  ←─ tests UI flows                            │                   from all 3 microservices
+  security_node  ←─ probes auth / injection                   │               posts to CorrelationBus
+  sre_node       ←─ latency / load tests                      │
+    │   (all post observations to CorrelationBus)             │
+    └──────────────────────────┬──────────────────────────────┘
+                               ▼
+                         correlator_node     ←─ joins client + server observations
+                               │                identifies root cause chains
+                               ▼                produces developer_brief
+                         challenger_node     ←─ challenges environment-variance findings
+                               │
+                               ▼
+                         qa_lead_node        ←─ synthesises all findings + RCA
+                               │
+                               ▼
+                         judge_node
+                               │
+                    ├── "APPROVE"  ──────────── END
+                    ├── "REJECT"   ──────────── END
+                    └── "REVIEW_REQUIRED" ──▶  human_approval_node  (interrupt)
+                                                      │
+                                                      ├── human_decision == "APPROVE" ─▶ END
+                                                      ├── human_decision == "REJECT"  ─▶ END
+                                                      └── human_decision == "RETEST"  ─▶ planner_node
+
+CorrelationBus: shared list on state (bus_observations).
+  Each agent appends its own observations; later agents read all prior observations.
+  This models the real-world QA scenario where client testers and server log
+  inspectors communicate findings before forming a root cause hypothesis.
 
 LangGraph is imported at call time so the module can be imported safely
 in environments where langgraph is not yet installed.  If the import
@@ -291,6 +298,124 @@ def sre_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "sre", "agents.sre.sre_agent", "run_sre_agent",
         "checkout_latency", state
     )
+
+
+def log_inspector_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Log Inspector Agent — reads /logs/events from every microservice.
+    Acts as the "server-side QA tester" in a multi-QA scenario.
+    Posts server-side observations to bus_observations for the correlator.
+    Runs in parallel with the client-side engineering agents conceptually,
+    but is placed after sre_node in the serial graph to keep state merging simple.
+    """
+    workflow_id = state.get("workflow_id")
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "log_inspector"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.log_inspector.log_inspector_agent", "run_log_inspector_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                fid=fid,
+            )
+            findings         = result.get("findings", [])
+            bus_observations = result.get("bus_observations", [])
+            fid              = result.get("fid", fid + len(findings))
+            log              = result.get("agent_log", {
+                "agent": "log_inspector", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            logger.exception("log_inspector_runner_failed")
+            findings = []
+            bus_observations = []
+            log = {"agent": "log_inspector", "status": "FAILED",
+                   "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()}
+    else:
+        findings = []
+        bus_observations = []
+        log = {"agent": "log_inspector", "status": "SKIPPED",
+               "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()}
+
+    logger.info("node_completed node=log_inspector workflow=%s findings=%d bus_obs=%d",
+                workflow_id, len(findings), len(bus_observations))
+    return {
+        "findings":         findings,
+        "bus_observations": bus_observations,
+        "agent_logs":       [log],
+        "_fid":             fid,
+    }
+
+
+def correlator_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Correlator Agent — joins client-side findings with server-side bus observations
+    to produce root cause chains and a developer brief.
+    This is the "QA team meeting" step where all evidence is synthesised.
+    """
+    workflow_id      = state.get("workflow_id")
+    findings         = state.get("findings", [])
+    bus_observations = state.get("bus_observations", [])
+    fid              = state.get("_fid", 1)
+    start            = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "correlator"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.correlator.correlator_agent", "run_correlator_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                findings=findings,
+                bus_observations=bus_observations,
+                fid=fid,
+            )
+            new_findings     = result.get("findings", [])
+            root_cause_chains = result.get("root_cause_chains", [])
+            developer_brief  = result.get("developer_brief", "")
+            fid              = result.get("fid", fid + len(new_findings))
+            log              = result.get("agent_log", {
+                "agent": "correlator", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+        except Exception:
+            logger.exception("correlator_runner_failed")
+            new_findings     = []
+            root_cause_chains = []
+            developer_brief  = ""
+            log = {"agent": "correlator", "status": "FAILED",
+                   "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()}
+    else:
+        new_findings     = []
+        root_cause_chains = []
+        developer_brief  = ""
+        log = {"agent": "correlator", "status": "SKIPPED",
+               "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()}
+
+    logger.info("node_completed node=correlator workflow=%s chains=%d",
+                workflow_id, len(root_cause_chains))
+    return {
+        "findings":          new_findings,
+        "root_cause_chains": root_cause_chains,
+        "developer_brief":   developer_brief,
+        "agent_logs":        [log],
+        "_fid":              fid,
+    }
 
 
 def challenger_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -593,25 +718,31 @@ def build_graph():
         builder = StateGraph(TuskerState)
 
         # Register nodes
-        builder.add_node("planner", planner_node)
-        builder.add_node("backend", backend_node)
-        builder.add_node("frontend", frontend_node)
-        builder.add_node("security", security_node)
-        builder.add_node("sre", sre_node)
-        builder.add_node("challenger", challenger_node)
-        builder.add_node("qa_lead", qa_lead_node)
-        builder.add_node("judge", judge_node)
+        builder.add_node("planner",       planner_node)
+        builder.add_node("backend",       backend_node)
+        builder.add_node("frontend",      frontend_node)
+        builder.add_node("security",      security_node)
+        builder.add_node("sre",           sre_node)
+        builder.add_node("log_inspector", log_inspector_node)   # server-side QA
+        builder.add_node("correlator",    correlator_node)      # cross-layer RCA
+        builder.add_node("challenger",    challenger_node)
+        builder.add_node("qa_lead",       qa_lead_node)
+        builder.add_node("judge",         judge_node)
         builder.add_node("human_approval", human_approval_node)
 
-        # Linear pipeline edges
-        builder.add_edge(START, "planner")
-        builder.add_edge("planner", "backend")
-        builder.add_edge("backend", "frontend")
-        builder.add_edge("frontend", "security")
-        builder.add_edge("security", "sre")
-        builder.add_edge("sre", "challenger")
-        builder.add_edge("challenger", "qa_lead")
-        builder.add_edge("qa_lead", "judge")
+        # Pipeline edges:
+        # Client-side agents run first, then server-side log inspector,
+        # then correlator joins everything before challenger/qa_lead/judge.
+        builder.add_edge(START,          "planner")
+        builder.add_edge("planner",      "backend")
+        builder.add_edge("backend",      "frontend")
+        builder.add_edge("frontend",     "security")
+        builder.add_edge("security",     "sre")
+        builder.add_edge("sre",          "log_inspector")  # server logs after client tests
+        builder.add_edge("log_inspector","correlator")     # correlate all evidence
+        builder.add_edge("correlator",   "challenger")
+        builder.add_edge("challenger",   "qa_lead")
+        builder.add_edge("qa_lead",      "judge")
 
         # Conditional: judge → human_approval or END
         builder.add_conditional_edges(
@@ -679,21 +810,24 @@ class LangGraphWrapper:
         }
 
         initial_state = {
-            "workflow_id": str(workflow_id),
-            "repository": state.get("repository", "unknown/repo"),
-            "pr_number": state.get("pr_number", 0),
-            "findings": [],
-            "challenges": [],
-            "agent_logs": [],
-            "qa_summary": "",
-            "risk_level": "LOW",
-            "decision": "",
-            "rationale": "",
-            "human_decision": None,
-            "human_reason": None,
-            "release_decision": None,
-            "release_reason": None,
-            "_fid": 1,
+            "workflow_id":       str(workflow_id),
+            "repository":        state.get("repository", "unknown/repo"),
+            "pr_number":         state.get("pr_number", 0),
+            "findings":          [],
+            "challenges":        [],
+            "agent_logs":        [],
+            "bus_observations":  [],      # CorrelationBus — agents post & read observations
+            "root_cause_chains": [],      # set by correlator
+            "developer_brief":   "",      # set by correlator
+            "qa_summary":        "",
+            "risk_level":        "LOW",
+            "decision":          "",
+            "rationale":         "",
+            "human_decision":    None,
+            "human_reason":      None,
+            "release_decision":  None,
+            "release_reason":    None,
+            "_fid":              1,
         }
 
         result = self._graph.invoke(initial_state, config=config)
@@ -745,28 +879,35 @@ class SimpleGraph:
         pr_number = state.get("pr_number", 0)
 
         current = {
-            "workflow_id": workflow_id,
-            "repository": repository,
-            "pr_number": pr_number,
-            "findings": [],
-            "challenges": [],
-            "agent_logs": [],
-            "qa_summary": "",
-            "risk_level": "LOW",
-            "decision": "",
-            "rationale": "",
-            "human_decision": None,
-            "human_reason": None,
-            "_fid": 1,
+            "workflow_id":       workflow_id,
+            "repository":        repository,
+            "pr_number":         pr_number,
+            "findings":          [],
+            "challenges":        [],
+            "agent_logs":        [],
+            "bus_observations":  [],
+            "root_cause_chains": [],
+            "developer_brief":   "",
+            "qa_summary":        "",
+            "risk_level":        "LOW",
+            "decision":          "",
+            "rationale":         "",
+            "human_decision":    None,
+            "human_reason":      None,
+            "_fid":              1,
         }
 
-        # Run each node in order, merging returned partial state
+        # Run each node in order, merging returned partial state.
+        # log_inspector runs after client-side agents so it can see their findings on bus.
+        # correlator runs after log_inspector to join all evidence.
         for node_fn in [
             planner_node,
             backend_node,
             frontend_node,
             security_node,
             sre_node,
+            log_inspector_node,
+            correlator_node,
             challenger_node,
             qa_lead_node,
             judge_node,

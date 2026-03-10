@@ -62,20 +62,22 @@ def get_graph():
 # ── Agent decision narrative generator ────────────────────────────────────────
 
 _AGENT_TEST_DESCRIPTIONS = {
-    "planner":   "Analysed PR scope, identified risk indicators and planned review strategy",
-    "backend":   "Tested API endpoints — checkout totals, latency, error rates, pricing logic",
-    "frontend":  "Tested UI flows, form validation, accessibility, cart behaviour",
-    "security":  "Probed authentication, JWT validation, injection vectors, auth bypass",
-    "sre":       "Load tested checkout endpoint, measured P95 latency and throughput",
-    "challenger":"Audited peer agent findings for false positives and environment variance",
-    "qa_lead":   "Synthesised all findings into risk assessment and standup summary",
-    "judge":     "Made final deployment decision based on all evidence",
+    "planner":       "Analysed PR scope, identified risk indicators and planned review strategy",
+    "backend":       "Tested API endpoints — checkout totals, latency, error rates, pricing logic",
+    "frontend":      "Tested UI flows, form validation, accessibility, cart behaviour",
+    "security":      "Probed authentication, JWT validation, injection vectors, auth bypass",
+    "sre":           "Load tested checkout endpoint, measured P95 latency and throughput",
+    "log_inspector": "Read structured logs from all microservices — identified server-side errors and cross-service failure chains",
+    "correlator":    "Correlated client-side findings with server-side log events — produced root cause chains and developer brief",
+    "challenger":    "Audited peer agent findings for false positives and environment variance",
+    "qa_lead":       "Synthesised all findings into risk assessment and standup summary",
+    "judge":         "Made final deployment decision based on all evidence",
 }
 
 
 def _derive_agent_decision_summary(agent: str, findings: list, challenges: list) -> dict:
     """Build a per-agent decision dict from graph output."""
-    my_findings  = [f for f in findings if f.get("agent") == agent]
+    my_findings   = [f for f in findings if f.get("agent") == agent]
     my_challenges = [c for c in challenges if c.get("challenger_agent") == agent]
 
     if agent == "challenger":
@@ -85,6 +87,25 @@ def _derive_agent_decision_summary(agent: str, findings: list, challenges: list)
             f"Raised {len(my_challenges)} challenge(s) against peer agent findings. "
             + (f"Disputes: {'; '.join(c.get('challenge_reason','')[:80] for c in my_challenges[:3])}"
                if my_challenges else "No contradictions or environment-variance issues found.")
+        )
+    elif agent == "log_inspector":
+        high_count = sum(1 for f in my_findings if f.get("severity") == "HIGH")
+        cross_svc  = [f for f in my_findings if f.get("test_name") == "cross_service_correlation"]
+        decision   = "FLAG" if high_count > 0 else "PASS"
+        test_count = len(my_findings)
+        summary    = (
+            f"Inspected logs across 3 microservices. Found {len(my_findings)} server-side event(s) "
+            f"({high_count} HIGH). "
+            + (f"{len(cross_svc)} cross-service failure chain(s) detected." if cross_svc else "")
+        )
+    elif agent == "correlator":
+        chains = [f for f in my_findings if f.get("test_name") == "root_cause_analysis"]
+        decision   = "FLAG" if chains else "PASS"
+        test_count = len(chains)
+        summary    = (
+            f"Root cause analysis identified {len(chains)} causal chain(s) "
+            "across client-side findings and server-side log events. "
+            + ("; ".join(f.get("title", "")[:60] for f in chains[:2]) if chains else "No cross-layer correlations found.")
         )
     elif agent in ("qa_lead", "judge"):
         decision   = "REVIEW_REQUIRED"
@@ -412,9 +433,8 @@ def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
             summary  = ad.get("summary", "")
             risk     = ad.get("risk_level", "NONE")
             tests    = ad.get("test_count", 0)
-            icon     = _AGENT_ICON.get(agent, "🤖")
-            di       = _DEC_ICON.get(decision, "⚪")
-            ri       = _SEV_ICON.get(risk, "⚪")
+            di       = _DEC_ICON.get(decision, "[UNKNOWN]")
+            ri       = _SEV_ICON.get(risk, "")
             my_f     = findings_by_agent.get(agent, [])
 
             lines = [
@@ -430,7 +450,7 @@ def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
                 lines.append("")
                 for finding in my_f[:6]:
                     sev  = finding.severity or "LOW"
-                    si   = _SEV_ICON.get(sev, "⚪")
+                    si   = _SEV_ICON.get(sev, sev)
                     desc = (finding.description or "")[:140]
                     lines.append(f"- **{si if si else sev}** {finding.title} — {desc}")
                 if len(my_f) > 6:
@@ -460,6 +480,10 @@ def _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_
         rows    = FindingsRepository(db).list_by_workflow(workflow_id)
         payload = [{"agent": f.agent, "title": f.title, "severity": f.severity,
                     "description": f.description} for f in rows]
+
+        # developer_brief comes from the correlator agent's cross-layer RCA
+        developer_brief = result.get("developer_brief", "")
+
         body = build_initial_review_comment(
             workflow_id=str(workflow_id),
             decision=result.get("decision", "UNKNOWN"),
@@ -468,6 +492,7 @@ def _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_
             risk_level=risk_level,
             rationale=result.get("rationale", ""),
             agent_decisions=agent_decisions,
+            developer_brief=developer_brief,
         )
         post_pr_comment_sync(wf.repository, wf.pr_number, body)
         logger.info("initial_pr_comment_posted workflow=%s repo=%s pr=%s",

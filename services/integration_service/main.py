@@ -64,6 +64,12 @@ GITEA_WEBHOOK_SECRET = os.getenv("GITEA_WEBHOOK_SECRET", "")
 # Only these Gitea PR actions start a new review
 TRIGGER_ACTIONS = {"opened", "synchronize", "reopened", "created", "reopen"}
 
+# Read agent tool config so the "review started" PR comment reflects actual setup
+_BACKEND_TOOL  = os.getenv("BACKEND_TEST_TOOL",  "pytest")
+_FRONTEND_TOOL = os.getenv("FRONTEND_TEST_TOOL", "playwright")
+_SECURITY_TOOL = os.getenv("SECURITY_PROBE_TOOL","httpx")
+_SRE_TOOL      = os.getenv("SRE_LOAD_TOOL",      "httpx")
+
 
 # ── HMAC signature validation ─────────────────────────────────────────────────
 
@@ -234,18 +240,17 @@ async def gitea_webhook(request: Request):
         repository, pr_number,
         "## TuskerSquad Review Started\n\n"
         f"> **{repository}** · PR #{pr_number} · `{action}`\n\n"
-        "The 8-agent AI pipeline is now running. "
-        "Each agent will post its findings as a comment when it completes.\n\n"
-        "| Agent | Role |\n|-------|------|\n"
-        "| Planner | Scope & strategy |\n"
-        "| Backend | API tests (pytest) |\n"
-        "| Frontend | UI tests (Playwright) |\n"
-        "| Security | OWASP probes |\n"
-        "| SRE | Latency & load tests |\n"
-        "| Challenger | False-positive audit |\n"
-        "| QA Lead | Risk synthesis |\n"
-        "| Judge | Final decision |\n\n"
-        "*TuskerSquad review complete.*"
+        "Each agent will post its findings as a comment when the pipeline finishes.\n\n"
+        f"| Agent | Tool |\n|-------|------|\n"
+        f"| Planner | scope analysis |\n"
+        f"| Backend | {_BACKEND_TOOL} |\n"
+        f"| Frontend | {_FRONTEND_TOOL} |\n"
+        f"| Security | {_SECURITY_TOOL} probes |\n"
+        f"| SRE | {_SRE_TOOL} load test |\n"
+        f"| Challenger | false-positive review |\n"
+        f"| QA Lead | risk synthesis |\n"
+        f"| Judge | final decision |\n\n"
+        "*TuskerSquad*"
     ))
 
     # 9. Trigger the review workflow

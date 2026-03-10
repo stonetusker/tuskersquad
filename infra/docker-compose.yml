@@ -62,7 +62,7 @@ services:
       - tuskersquad-net
 
 
-  # ── ShopFlow demo e-commerce app (test target) ──────────────────────────────
+  # ── ShopFlow Demo — legacy monolith (kept for compatibility) ────────────────
   demo-backend:
     build:
       context: ..
@@ -85,6 +85,81 @@ services:
       start_period: 30s
 
 
+  # ── ShopFlow v2 — Catalog Microservice (port 8081) ───────────────────────────
+  catalog-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.catalog
+    container_name: tuskersquad-catalog
+    restart: unless-stopped
+    environment:
+      BUG_INVENTORY:  "${BUG_INVENTORY:-false}"
+      BUG_PRICE_RULE: "${BUG_PRICE_RULE:-false}"
+    ports:
+      - "8081:8081"
+    networks:
+      - tuskersquad-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=4)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 20s
+
+
+  # ── ShopFlow v2 — Order Microservice (port 8082) ─────────────────────────────
+  order-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.order
+    container_name: tuskersquad-order
+    restart: unless-stopped
+    environment:
+      BUG_SLOW:          "${BUG_SLOW:-false}"
+      BUG_PRICE:         "${BUG_PRICE:-false}"
+      BUG_NO_ROLLBACK:   "${BUG_NO_ROLLBACK:-false}"
+      CATALOG_SERVICE_URL: "http://tuskersquad-catalog:8081"
+      USER_SERVICE_URL:    "http://tuskersquad-user:8083"
+    ports:
+      - "8082:8082"
+    depends_on:
+      catalog-service:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+    networks:
+      - tuskersquad-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=4)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 25s
+
+
+  # ── ShopFlow v2 — User Microservice (port 8083) ──────────────────────────────
+  user-service:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.user
+    container_name: tuskersquad-user
+    restart: unless-stopped
+    environment:
+      BUG_JWT_NO_EXPIRY: "${BUG_JWT_NO_EXPIRY:-false}"
+      BUG_WEAK_PASSWORD: "${BUG_WEAK_PASSWORD:-false}"
+      JWT_SECRET:        "${JWT_SECRET:-shopflow-demo-secret-not-for-production}"
+    ports:
+      - "8083:8083"
+    networks:
+      - tuskersquad-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8083/health', timeout=4)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 20s
+
+
   # ── LangGraph API (8-agent orchestration core) ──────────────────────────────
   langgraph-api:
     build:
@@ -97,40 +172,40 @@ services:
       # Mac/Windows: host.docker.internal resolves to the host machine automatically.
       # Linux:       set OLLAMA_URL in infra/.env to your host IP, e.g.:
       #              OLLAMA_URL=http://192.168.1.100:11434
-      OLLAMA_URL: "${OLLAMA_URL:-http://host.docker.internal:11434}"
-      BACKEND_TEST_TOOL:    "${BACKEND_TEST_TOOL:-pytest}"
-      BACKEND_TEST_DIR:     "${BACKEND_TEST_DIR:-tests/api}"
-      DEMO_APP_URL:         "${DEMO_APP_URL:-http://tuskersquad-demo-backend:8080}"
-      FRONTEND_TEST_TOOL:   "${FRONTEND_TEST_TOOL:-playwright}"
-      PLAYWRIGHT_TEST_DIR:  "${PLAYWRIGHT_TEST_DIR:-tests/ui}"
-      DEMO_FRONTEND_URL:    "${DEMO_FRONTEND_URL:-http://localhost:5173}"
-      SECURITY_PROBE_TOOL:  "${SECURITY_PROBE_TOOL:-httpx}"
-      SRE_LOAD_TOOL:        "${SRE_LOAD_TOOL:-httpx}"
-      SRE_REQUEST_COUNT:    "${SRE_REQUEST_COUNT:-10}"
-      LATENCY_THRESHOLD_MS: "${LATENCY_THRESHOLD_MS:-500}"
+      OLLAMA_URL:            "${OLLAMA_URL:-http://host.docker.internal:11434}"
       # ── Database ─────────────────────────────────────────────────────────────
-      POSTGRES_USER:     tusker
-      POSTGRES_PASSWORD: tusker
-      POSTGRES_DB:       tuskersquad
-      POSTGRES_HOST:     tuskersquad-postgres
-      POSTGRES_PORT:     "5432"
-      # ── Internal URLs ────────────────────────────────────────────────────────
-      DEMO_APP_URL:      "http://tuskersquad-demo-backend:8080"
-      DEMO_FRONTEND_URL: "http://tuskersquad-frontend:5173"
+      POSTGRES_USER:         tusker
+      POSTGRES_PASSWORD:     tusker
+      POSTGRES_DB:           tuskersquad
+      POSTGRES_HOST:         tuskersquad-postgres
+      POSTGRES_PORT:         "5432"
+      # ── Internal service URLs ─────────────────────────────────────────────────
+      DEMO_APP_URL:          "http://tuskersquad-demo-backend:8080"
+      DEMO_FRONTEND_URL:     "http://tuskersquad-frontend:5173"
+      # ── ShopFlow v2 microservice URLs (read by log_inspector agent) ───────────
+      CATALOG_SERVICE_URL:   "http://tuskersquad-catalog:8081"
+      ORDER_SERVICE_URL:     "http://tuskersquad-order:8082"
+      USER_SERVICE_URL:      "http://tuskersquad-user:8083"
       # ── Gitea ────────────────────────────────────────────────────────────────
-      GITEA_URL:   "http://tuskersquad-gitea:3000"
-      GITEA_TOKEN: "${GITEA_TOKEN:-}"
+      GITEA_URL:             "http://tuskersquad-gitea:3000"
+      GITEA_TOKEN:           "${GITEA_TOKEN:-}"
       # ── Auto-Merge & Deploy ───────────────────────────────────────────────────
       AUTO_MERGE_ON_APPROVE: "${AUTO_MERGE_ON_APPROVE:-false}"
       MERGE_STYLE:           "${MERGE_STYLE:-merge}"
       DEPLOY_ON_MERGE:       "${DEPLOY_ON_MERGE:-false}"
       DEPLOY_BRANCH:         "${DEPLOY_BRANCH:-main}"
       DEPLOY_PIPELINE:       "${DEPLOY_PIPELINE:-deploy}"
-      # ── SRE thresholds ───────────────────────────────────────────────────────
-      LATENCY_THRESHOLD_MS: "500"
-      SRE_REQUEST_COUNT:    "10"
+      # ── Agent tool configuration (override in infra/.env) ─────────────────────
+      BACKEND_TEST_TOOL:     "${BACKEND_TEST_TOOL:-pytest}"
+      BACKEND_TEST_DIR:      "${BACKEND_TEST_DIR:-tests/api}"
+      FRONTEND_TEST_TOOL:    "${FRONTEND_TEST_TOOL:-playwright}"
+      PLAYWRIGHT_TEST_DIR:   "${PLAYWRIGHT_TEST_DIR:-tests/ui}"
+      SECURITY_PROBE_TOOL:   "${SECURITY_PROBE_TOOL:-httpx}"
+      SRE_LOAD_TOOL:         "${SRE_LOAD_TOOL:-httpx}"
+      SRE_REQUEST_COUNT:     "${SRE_REQUEST_COUNT:-10}"
+      LATENCY_THRESHOLD_MS:  "${LATENCY_THRESHOLD_MS:-500}"
       # ── Logging ──────────────────────────────────────────────────────────────
-      LOG_DIR: "/app/logs"
+      LOG_DIR:               "/app/logs"
     ports:
       - "8000:8000"
     volumes:
@@ -139,6 +214,12 @@ services:
       postgres:
         condition: service_healthy
       demo-backend:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      user-service:
         condition: service_healthy
     networks:
       - tuskersquad-net
