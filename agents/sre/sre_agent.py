@@ -18,9 +18,10 @@ from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("agents.sre")
 
-DEMO_APP_URL = os.getenv("DEMO_APP_URL", "http://tuskersquad-demo-backend:8080")
+DEMO_APP_URL         = os.getenv("DEMO_APP_URL",          "http://tuskersquad-demo-backend:8080")
 LATENCY_THRESHOLD_MS = float(os.getenv("LATENCY_THRESHOLD_MS", "500"))
-REQUEST_COUNT = int(os.getenv("SRE_REQUEST_COUNT", "10"))
+REQUEST_COUNT        = int(os.getenv("SRE_REQUEST_COUNT",   "10"))
+SRE_LOAD_TOOL        = os.getenv("SRE_LOAD_TOOL",          "httpx")  # httpx | k6 | locust | ab
 
 
 def _measure_endpoint(base_url: str, method: str, path: str, token: Optional[str] = None, json_body: Optional[dict] = None) -> Optional[Dict]:

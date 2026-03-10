@@ -380,18 +380,11 @@ def resume_workflow_with_decision(workflow_id: str, decision: str, reason: str =
 
 
 _AGENT_ICON = {
-    "planner":    "🧭",
-    "backend":    "⚙️",
-    "frontend":   "🎨",
-    "security":   "🔐",
-    "sre":        "📡",
-    "challenger": "⚔️",
-    "qa_lead":    "📋",
-    "judge":      "⚖️",
+    "planner": "", "backend": "", "frontend": "", "security": "",
+    "sre": "", "challenger": "", "qa_lead": "", "judge": "",
 }
-_SEV_ICON = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢", "NONE": "⚪"}
-_DEC_ICON = {"APPROVE": "✅", "REJECT": "❌", "REVIEW_REQUIRED": "⚠️",
-             "PASS": "🟢", "FLAG": "🔴", "CHALLENGE": "⚔️"}
+_SEV_ICON = {"HIGH": "[HIGH]", "MEDIUM": "[MEDIUM]", "LOW": "[LOW]", "NONE": ""}
+_DEC_ICON = {"APPROVE": "[APPROVED]", "REJECT": "[REJECTED]", "REVIEW_REQUIRED": "[REVIEW REQUIRED]", "PASS": "[PASS]", "FLAG": "[FLAG]", "CHALLENGE": "[CHALLENGE]"}
 _PIPELINE_ORDER = ["planner", "backend", "frontend", "security",
                    "sre", "challenger", "qa_lead", "judge"]
 
@@ -425,7 +418,7 @@ def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
             my_f     = findings_by_agent.get(agent, [])
 
             lines = [
-                f"### {icon} **{agent.replace('_', ' ').title()} Agent** — {di} `{decision}`  {ri} Risk: `{risk}`",
+                f"### {agent.replace('_', ' ').title()} — {di}  Risk: {ri if ri else risk}",
                 "",
             ]
             if summary:
@@ -439,13 +432,13 @@ def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
                     sev  = finding.severity or "LOW"
                     si   = _SEV_ICON.get(sev, "⚪")
                     desc = (finding.description or "")[:140]
-                    lines.append(f"- {si} **[{sev}]** {finding.title} — {desc}")
+                    lines.append(f"- **{si if si else sev}** {finding.title} — {desc}")
                 if len(my_f) > 6:
                     lines.append(f"- *(+ {len(my_f) - 6} more findings)*")
             else:
                 lines.append(f"**Tests run:** {tests} · **Findings:** 0 — All checks passed.")
 
-            lines += ["", "---", "*TuskerSquad · Stonetusker Systems*"]
+            lines += ["", "---", "*TuskerSquad*"]
             body = "\n".join(lines)
 
             post_pr_comment_sync(wf.repository, wf.pr_number, body)

@@ -19,7 +19,8 @@ from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("agents.security")
 
-DEMO_APP_URL = os.getenv("DEMO_APP_URL", "http://tuskersquad-demo-backend:8080")
+DEMO_APP_URL        = os.getenv("DEMO_APP_URL",         "http://tuskersquad-demo-backend:8080")
+SECURITY_PROBE_TOOL = os.getenv("SECURITY_PROBE_TOOL", "httpx")  # httpx | zap | trivy
 
 
 def _probe_auth_bypass(base_url: str) -> Optional[Dict]:

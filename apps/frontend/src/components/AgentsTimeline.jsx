@@ -1,8 +1,8 @@
 import React from 'react'
 
 const AGENT_ICONS = {
-  planner: '🧭', backend: '⚙️', frontend: '🎨', security: '🔐',
-  sre: '📡', challenger: '⚔️', qa_lead: '📋', judge: '⚖️',
+  planner: 'PL', backend: 'BE', frontend: 'FE', security: 'SEC',
+  sre: 'SRE', challenger: 'CH', qa_lead: 'QA', judge: 'JDG',
 }
 
 const STATUS_COLORS = {
@@ -25,7 +25,7 @@ export default function AgentsTimeline({ agents, currentAgent }) {
             </div>
             <div className="agent-body">
               <div className="agent-name">
-                <span className="agent-icon">{AGENT_ICONS[currentAgent] || '🤖'}</span>
+                <span className="agent-icon">{AGENT_ICONS[currentAgent] || '??'}</span>
                 {currentAgent}
                 <span className="badge badge-warn" style={{ fontSize: 9 }}>Running</span>
               </div>
@@ -42,7 +42,7 @@ export default function AgentsTimeline({ agents, currentAgent }) {
       {agents.map((a, i) => {
         const isActive = a.agent === currentAgent && !a.completed_at
         const color    = isActive ? '#FACF0E' : (STATUS_COLORS[a.status] || '#d1d5db')
-        const icon     = AGENT_ICONS[a.agent] || '🤖'
+        const icon     = AGENT_ICONS[a.agent] || '??'
 
         let duration = ''
         if (a.started_at && a.completed_at) {

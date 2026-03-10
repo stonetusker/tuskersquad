@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import api from '../api'
 
 const AGENT_ICONS = {
-  planner:'🧭', backend:'⚙️', frontend:'🎨', security:'🔐',
-  sre:'📡', challenger:'⚔️', qa_lead:'📋', judge:'⚖️',
+  planner:'PL', backend:'BE', frontend:'FE', security:'SEC',
+  sre:'SRE', challenger:'CH', qa_lead:'QA', judge:'JDG',
 }
 
 export default function LLMLogsViewer({ workflowId }) {
@@ -69,7 +69,7 @@ export default function LLMLogsViewer({ workflowId }) {
               padding:'0.6rem 0.8rem',cursor:'pointer',
               background: ok ? '#1C1C1E' : '#2d1515',
             }}>
-              <span style={{fontSize:'1.1rem'}}>{AGENT_ICONS[log.agent]||'🤖'}</span>
+              <span style={{fontSize:'1.1rem'}}>{AGENT_ICONS[log.agent]||'??'}</span>
               <span style={{fontFamily:'Space Mono,monospace',color:'#FACF0E',fontSize:'0.8rem',fontWeight:'bold'}}>
                 {log.agent}
               </span>

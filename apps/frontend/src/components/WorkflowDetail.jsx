@@ -18,16 +18,16 @@ const STATUS_CFG = {
 }
 
 const MERGE_CFG = {
-  pending:  { icon: '⏳', color: '#f59e0b', label: 'Merging…'       },
+  pending:  { icon: '...', color: '#f59e0b', label: 'Merging…'       },
   success:  { icon: '🔀', color: '#22c55e', label: 'Merged'          },
-  failed:   { icon: '❌', color: '#ef4444', label: 'Merge failed'    },
+  failed:   { icon: 'ERR', color: '#ef4444', label: 'Merge failed'    },
   skipped:  { icon: '—',  color: '#94a3b8', label: 'Merge skipped'   },
 }
 
 const DEPLOY_CFG = {
-  pending:   { icon: '⏳', color: '#f59e0b', label: 'Deploying…'         },
-  triggered: { icon: '🚀', color: '#22c55e', label: 'Deploy triggered'   },
-  failed:    { icon: '❌', color: '#ef4444', label: 'Deploy failed'       },
+  pending:   { icon: '...', color: '#f59e0b', label: 'Deploying…'         },
+  triggered: { icon: '-->', color: '#22c55e', label: 'Deploy triggered'   },
+  failed:    { icon: 'ERR', color: '#ef4444', label: 'Deploy failed'       },
   skipped:   { icon: '—',  color: '#94a3b8', label: 'Deploy skipped'     },
 }
 
@@ -149,7 +149,7 @@ export default function WorkflowDetail({ workflowId }) {
   if (!detail) {
     return (
       <div className="empty-state">
-        <div className="empty-state-icon">⚙️</div>
+        <div className="empty-state-icon">—</div>
         <div className="empty-state-text">Loading workflow…</div>
       </div>
     )
@@ -212,7 +212,7 @@ export default function WorkflowDetail({ workflowId }) {
       {/* ── Governance Bar ── */}
       <div className={`gov-bar ${isWaiting ? 'awaiting' : ''}`}>
         <div className="gov-bar-head">
-          <span style={{ fontSize: 16 }}>{isWaiting ? '⏸️' : isDone ? '✅' : '⚙️'}</span>
+          <span style={{ fontSize: 16 }}>{isWaiting ? '[ ]' : isDone ? '[x]' : '>>'}</span>
           Human Governance
           {isWaiting && <span className="badge badge-yellow" style={{ fontSize: 10 }}>AWAITING DECISION</span>}
         </div>
@@ -233,7 +233,7 @@ export default function WorkflowDetail({ workflowId }) {
             </button>
             <button className="btn btn-release" disabled={anyBusy}
               onClick={() => setShowRelease(v => !v)}>
-              ⚡ Override
+              Override
             </button>
           </div>
 
@@ -245,7 +245,7 @@ export default function WorkflowDetail({ workflowId }) {
 
           {showRelease && (
             <div className="release-panel">
-              <h4>⚡ Release Manager Override</h4>
+              <h4>Release Manager Override</h4>
               <p>Overrides AI governance. Business justification is required and will be posted to the PR.</p>
               <input
                 placeholder="Business justification (required)…"

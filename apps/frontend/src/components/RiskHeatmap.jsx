@@ -4,14 +4,14 @@
 import React from 'react'
 
 const AGENT_META = {
-  planner:    { icon: '🧭', label: 'Planner'    },
-  backend:    { icon: '⚙️',  label: 'Backend'    },
-  frontend:   { icon: '🎨',  label: 'Frontend'   },
-  security:   { icon: '🔐',  label: 'Security'   },
-  sre:        { icon: '📡',  label: 'SRE'        },
-  challenger: { icon: '⚔️',  label: 'Challenger' },
-  qa_lead:    { icon: '📋',  label: 'QA Lead'    },
-  judge:      { icon: '⚖️',  label: 'Judge'      },
+  planner:    { icon: 'PL', label: 'Planner'    },
+  backend:    { icon: 'BE',  label: 'Backend'    },
+  frontend:   { icon: 'FE',  label: 'Frontend'   },
+  security:   { icon: 'SEC',  label: 'Security'   },
+  sre:        { icon: 'SRE',  label: 'SRE'        },
+  challenger: { icon: 'CH',  label: 'Challenger' },
+  qa_lead:    { icon: 'QA',  label: 'QA Lead'    },
+  judge:      { icon: 'JDG',  label: 'Judge'      },
 }
 
 const RISK_ORDER = { HIGH: 3, MEDIUM: 2, LOW: 1 }

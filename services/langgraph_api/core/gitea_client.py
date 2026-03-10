@@ -43,24 +43,24 @@ def _flag(env_var: str) -> bool:
 # ─── Icons ────────────────────────────────────────────────────────────────────
 
 _DECISION_ICON = {
-    "APPROVE":          "✅",
-    "REJECT":           "❌",
-    "REVIEW_REQUIRED":  "⚠️",
-    "RETEST_REQUESTED": "🔄",
-    "PASS":             "🟢",
-    "FLAG":             "🔴",
-    "CHALLENGE":        "⚔️",
+    "APPROVE":          "[APPROVED]",
+    "REJECT":           "[REJECTED]",
+    "REVIEW_REQUIRED":  "[REVIEW REQUIRED]",
+    "RETEST_REQUESTED": "[RETEST]",
+    "PASS":             "[PASS]",
+    "FLAG":             "[FLAG]",
+    "CHALLENGE":        "[CHALLENGE]",
 }
-_SEV_ICON     = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢", "NONE": "⚪"}
+_SEV_ICON     = {"HIGH": "[HIGH]", "MEDIUM": "[MEDIUM]", "LOW": "[LOW]", "NONE": ""}
 _AGENT_ICON   = {
-    "planner":   "🧭",
-    "backend":   "⚙️",
-    "frontend":  "🎨",
-    "security":  "🔐",
-    "sre":       "📡",
-    "challenger":"⚔️",
-    "qa_lead":   "📋",
-    "judge":     "⚖️",
+    "planner":   "",
+    "backend":   "",
+    "frontend":  "",
+    "security":  "",
+    "sre":       "",
+    "challenger":"",
+    "qa_lead":   "",
+    "judge":     "",
 }
 _AGENT_LABEL  = {
     "planner":   "Planner Agent",
@@ -107,7 +107,7 @@ def _agent_section(
         summary = ""
 
     lines = [
-        f"#### {icon} {label}  {di} `{d}`  {ri} Risk: `{risk}`",
+        f"#### {label}  {di}  Risk: {ri if ri else risk}",
     ]
     if summary:
         lines.append(f"> {summary[:400]}")
@@ -118,9 +118,9 @@ def _agent_section(
         lines.append("")
         for f in my_findings[:8]:
             sev = f.get("severity", "LOW")
-            si  = _SEV_ICON.get(sev, "⚪")
+            si  = _SEV_ICON.get(sev, sev)
             desc = (f.get("description") or "")[:160]
-            lines.append(f"- {si} **{f.get('title', '?')}** — {desc}")
+            lines.append(f"- **{si}** {f.get('title', '?')} — {desc}")
         if len(my_findings) > 8:
             lines.append(f"- *(+{len(my_findings)-8} more findings)*")
     else:
@@ -145,12 +145,12 @@ def build_initial_review_comment(
     Build the rich initial PR comment posted when the pipeline completes.
     Includes a section for every agent with their individual decision.
     """
-    icon  = _DECISION_ICON.get(decision, "🤖")
+    icon  = _DECISION_ICON.get(decision, "[UNKNOWN]")
     ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    risk_icon = _SEV_ICON.get(risk_level, "⚪")
+    risk_icon = _SEV_ICON.get(risk_level, "")
 
     lines = [
-        f"## {icon} TuskerSquad AI Review — **{decision}**",
+        f"## TuskerSquad Review — {icon} **{decision}**",
         f"> Workflow `{workflow_id[:8]}` · {ts} · Overall Risk: {risk_icon} `{risk_level or 'UNKNOWN'}`",
         "",
     ]
@@ -158,7 +158,7 @@ def build_initial_review_comment(
     # QA Lead summary box
     if qa_summary:
         lines += [
-            "### 📋 QA Lead Summary",
+            "### QA Lead Summary",
             "",
             qa_summary[:800],
             "",
@@ -168,7 +168,7 @@ def build_initial_review_comment(
     if rationale:
         lines += [
             "<details>",
-            "<summary><strong>⚖️ Judge Agent Rationale</strong> (click to expand)</summary>",
+            "<summary><strong>Judge Rationale</strong> (click to expand)</summary>",
             "",
             rationale[:800],
             "",
@@ -180,7 +180,7 @@ def build_initial_review_comment(
     PIPELINE_ORDER = ["planner", "backend", "frontend", "security", "sre", "challenger", "qa_lead", "judge"]
     lines += [
         "---",
-        "### 🔍 Agent-by-Agent Findings",
+        "### Agent Findings",
         "",
         "<details>",
         "<summary><strong>Click to expand full agent report</strong></summary>",
@@ -196,7 +196,7 @@ def build_initial_review_comment(
     # High-severity findings table at top level
     high_findings = [f for f in findings if (f.get("severity") or "").upper() == "HIGH"]
     if high_findings:
-        lines += ["### 🔴 High-Severity Findings", ""]
+        lines += ["### High-Severity Findings", ""]
         lines += ["| Agent | Finding | Description |", "|-------|---------|-------------|"]
         for f in high_findings[:10]:
             desc = (f.get("description") or "")[:100].replace("|", "\\|")
@@ -205,7 +205,7 @@ def build_initial_review_comment(
 
     lines += [
         "---",
-        f"*Powered by [TuskerSquad](https://stonetusker.com) · 8-Agent AI Pipeline · {ts}*",
+        f"*TuskerSquad review — workflow `{workflow_id[:8]}` · {ts}*",
     ]
     return "\n".join(lines)
 
@@ -221,7 +221,7 @@ def build_governance_comment(
     deploy_url:     str  = "",
 ) -> str:
     """Compact governance decision comment (approve/reject/override)."""
-    icon  = _DECISION_ICON.get(decision, "🤖")
+    icon  = _DECISION_ICON.get(decision, "[UNKNOWN]")
     ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     label = "Release Manager Override" if is_release else "Human Governance Decision"
 
@@ -233,11 +233,11 @@ def build_governance_comment(
     if reason:
         lines += [f"**Reason:** {reason}", ""]
     if merged:
-        lines += ["🔀 **PR merged automatically by TuskerSquad**", ""]
+        lines += ["**PR merged automatically by TuskerSquad.**", ""]
     if deployed:
         dl = f" · [View pipeline]({deploy_url})" if deploy_url else ""
-        lines += [f"🚀 **Deployment pipeline triggered**{dl}", ""]
-    lines += ["---", "*TuskerSquad · Stonetusker Systems*"]
+        lines += [f"**Deployment pipeline triggered.**{dl}", ""]
+    lines += ["---", "*TuskerSquad*"]
     return "\n".join(lines)
 
 
@@ -393,7 +393,7 @@ def merge_pr_sync(owner_repo, pr_number, merge_style=None, commit_message="") ->
     if style not in ("merge", "rebase", "squash"):
         style = "merge"
     if not commit_message:
-        commit_message = "chore: auto-merged by TuskerSquad after AI review ✅"
+        commit_message = "chore: auto-merged by TuskerSquad after review"
     endpoint = f"{url}/api/v1/repos/{owner_repo}/pulls/{pr_number}/merge"
     try:
         with httpx.Client(timeout=15.0) as client:

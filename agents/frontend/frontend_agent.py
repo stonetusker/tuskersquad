@@ -14,8 +14,9 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger("agents.frontend")
 
-DEMO_FRONTEND_URL = os.getenv("DEMO_FRONTEND_URL", "http://localhost:5173")
-PLAYWRIGHT_TEST_DIR = os.getenv("PLAYWRIGHT_TEST_DIR", "tests/ui")
+DEMO_FRONTEND_URL    = os.getenv("DEMO_FRONTEND_URL",   "http://localhost:5173")
+PLAYWRIGHT_TEST_DIR  = os.getenv("PLAYWRIGHT_TEST_DIR", "tests/ui")
+FRONTEND_TEST_TOOL   = os.getenv("FRONTEND_TEST_TOOL",  "playwright")  # playwright | cypress | selenium
 
 
 def _run_playwright() -> Dict[str, Any]:
@@ -71,7 +72,7 @@ def _run_playwright() -> Dict[str, Any]:
             result["passed"] = 1
 
     except FileNotFoundError:
-        result["output"] = "pytest / playwright not found"
+        result["output"] = f"{FRONTEND_TEST_TOOL} not found (install it or change FRONTEND_TEST_TOOL)"
     except subprocess.TimeoutExpired:
         result["output"] = "Playwright tests timed out after 120s"
     except Exception as exc:
@@ -129,7 +130,7 @@ def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: i
 
     if pw_result["ran"]:
         logger.info(
-            "playwright_completed",
+            f"{FRONTEND_TEST_TOOL}_completed",
             extra={"workflow_id": workflow_id, "passed": pw_result["passed"], "failed": pw_result["failed"]},
         )
         now = datetime.utcnow().isoformat()
@@ -145,7 +146,7 @@ def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: i
                     f"{pw_result['failed']} UI test(s) failed. "
                     f"Output: {pw_result['output'][:400]}"
                 ),
-                "test_name": "playwright_suite",
+                "test_name": f"{FRONTEND_TEST_TOOL}_suite",
                 "created_at": now,
             })
             fid += 1
@@ -157,13 +158,13 @@ def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: i
                 "severity": "LOW",
                 "title": f"frontend - all Playwright flows passed",
                 "description": "Login, Checkout, and Order flows all completed successfully.",
-                "test_name": "playwright_suite",
+                "test_name": f"{FRONTEND_TEST_TOOL}_suite",
                 "created_at": now,
             })
             fid += 1
     else:
         logger.warning(
-            "playwright_unavailable_using_synthetic_findings",
+            f"{FRONTEND_TEST_TOOL}_unavailable_using_synthetic_findings",
             extra={"workflow_id": workflow_id, "reason": pw_result["output"]},
         )
         synth = _synthetic_findings(workflow_id, fid)

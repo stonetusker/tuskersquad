@@ -134,12 +134,12 @@ export default function ControlPanel({ onStarted }) {
         </div>
 
         <button className="btn btn-primary" onClick={() => start()} disabled={busy || !repo}>
-          {busy ? '⏳ Starting…' : '▶ Start Review'}
+          {busy ? 'Starting...' : 'Start Review'}
         </button>
 
         {msg && (
           <div className={`action-msg ${msg.ok ? 'ok' : 'err'}`} style={{ marginTop: 8 }}>
-            {msg.ok ? '✅' : '❌'} {msg.text}
+            {msg.ok ? '>' : '!'} {msg.text}
           </div>
         )}
 

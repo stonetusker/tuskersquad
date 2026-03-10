@@ -14,8 +14,9 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger("agents.backend")
 
-DEMO_APP_URL = os.getenv("DEMO_APP_URL", "http://tuskersquad-demo-backend:8080")
-TEST_DIR = os.getenv("BACKEND_TEST_DIR", "tests/api")
+DEMO_APP_URL      = os.getenv("DEMO_APP_URL",      "http://tuskersquad-demo-backend:8080")
+TEST_DIR          = os.getenv("BACKEND_TEST_DIR", "tests/api")
+BACKEND_TEST_TOOL = os.getenv("BACKEND_TEST_TOOL", "pytest")  # pytest | unittest | nose2
 
 
 def _run_pytest(test_dir: str, base_url: str) -> Dict[str, Any]:
@@ -94,7 +95,7 @@ def run_backend_agent(workflow_id: str, repository: str, pr_number: int, fid: in
             findings.append({
                 "id": fid, "workflow_id": workflow_id, "agent": "backend",
                 "severity": "HIGH",
-                "title": f"backend - {pr['failed']} pytest test(s) failed",
+                "title": f"backend - {pr['failed']} {BACKEND_TEST_TOOL} test(s) failed",
                 "description": f"{pr['failed']} failed, {pr['errors']} errors. Output: {pr['output'][:400]}",
                 "test_name": "checkout_latency", "created_at": now,
             })
@@ -103,13 +104,13 @@ def run_backend_agent(workflow_id: str, repository: str, pr_number: int, fid: in
             findings.append({
                 "id": fid, "workflow_id": workflow_id, "agent": "backend",
                 "severity": "LOW",
-                "title": f"backend - all {pr['passed']} pytest tests passed",
+                "title": f"backend - all {pr['passed']} {BACKEND_TEST_TOOL} tests passed",
                 "description": "All backend API tests passed.",
                 "test_name": "pytest_suite", "created_at": now,
             })
             fid += 1
     else:
-        logger.warning("pytest_unavailable workflow=%s: %s", workflow_id, pr["output"])
+        logger.warning("test_tool_unavailable tool=%s workflow=%s: %s", BACKEND_TEST_TOOL, workflow_id, pr["output"])
         synth = _synthetic_findings(workflow_id, fid)
         findings.extend(synth)
         fid += len(synth)

@@ -17,7 +17,7 @@ export default function Dashboard() {
           ? <WorkflowDetail workflowId={selected} />
           : (
             <div className="empty-state">
-              <div className="empty-state-icon">🔍</div>
+              <div className="empty-state-icon">—</div>
               <div className="empty-state-text">Select a review to inspect</div>
               <div className="empty-state-sub">or start a new PR review on the left</div>
             </div>

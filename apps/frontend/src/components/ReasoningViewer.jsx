@@ -35,7 +35,7 @@ export default function ReasoningViewer({ reasoning = [] }) {
             className={`reasoning-tab ${i === active ? 'active' : ''}`}
             onClick={() => setActive(i)}
           >
-            {AGENT_ICONS[r.agent] || '🤖'} {r.agent}
+            {AGENT_ICONS[r.agent] || '??'} {r.agent}
           </button>
         ))}
       </div>

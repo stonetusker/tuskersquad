@@ -6,14 +6,14 @@
 import React, { useMemo } from 'react'
 
 const AGENTS = [
-  { id: 'planner',    label: 'Planner',    icon: '🧭', x: 130, y: 20  },
-  { id: 'backend',    label: 'Backend',    icon: '⚙️',  x: 20,  y: 90  },
-  { id: 'frontend',   label: 'Frontend',   icon: '🎨',  x: 130, y: 90  },
-  { id: 'security',   label: 'Security',   icon: '🔐',  x: 240, y: 90  },
-  { id: 'sre',        label: 'SRE',        icon: '📡',  x: 350, y: 90  },
-  { id: 'challenger', label: 'Challenger', icon: '⚔️',  x: 185, y: 160 },
-  { id: 'qa_lead',    label: 'QA Lead',    icon: '📋',  x: 185, y: 230 },
-  { id: 'judge',      label: 'Judge',      icon: '⚖️',  x: 185, y: 300 },
+  { id: 'planner',    label: 'Planner',    icon: 'PL', x: 130, y: 20  },
+  { id: 'backend',    label: 'Backend',    icon: 'BE',  x: 20,  y: 90  },
+  { id: 'frontend',   label: 'Frontend',   icon: 'FE',  x: 130, y: 90  },
+  { id: 'security',   label: 'Security',   icon: 'SEC',  x: 240, y: 90  },
+  { id: 'sre',        label: 'SRE',        icon: 'SRE',  x: 350, y: 90  },
+  { id: 'challenger', label: 'Challenger', icon: 'CH',  x: 185, y: 160 },
+  { id: 'qa_lead',    label: 'QA Lead',    icon: 'QA',  x: 185, y: 230 },
+  { id: 'judge',      label: 'Judge',      icon: 'JDG',  x: 185, y: 300 },
 ]
 
 const EDGES = [

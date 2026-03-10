@@ -6,12 +6,12 @@ const AGENT_LABELS = { planner:'Planner', backend:'Backend Eng.', frontend:'Fron
 const PIPELINE_ORDER = ['planner','backend','frontend','security','sre','challenger','qa_lead','judge']
 
 const DECISION_STYLE = {
-  APPROVE:         { bg:'#064e3b', color:'#6ee7b7', label:'✅ APPROVE' },
-  REJECT:          { bg:'#7f1d1d', color:'#fca5a5', label:'❌ REJECT' },
-  REVIEW_REQUIRED: { bg:'#78350f', color:'#fde68a', label:'⚠️ REVIEW' },
-  PASS:            { bg:'#064e3b', color:'#6ee7b7', label:'🟢 PASS'   },
-  FLAG:            { bg:'#7f1d1d', color:'#fca5a5', label:'🔴 FLAG'   },
-  CHALLENGE:       { bg:'#1e1b4b', color:'#c7d2fe', label:'⚔️ CHALLENGE'},
+  APPROVE:         { bg:'#064e3b', color:'#6ee7b7', label:'APPROVE' },
+  REJECT:          { bg:'#7f1d1d', color:'#fca5a5', label:'REJECT' },
+  REVIEW_REQUIRED: { bg:'#78350f', color:'#fde68a', label:'REVIEW' },
+  PASS:            { bg:'#064e3b', color:'#6ee7b7', label:'PASS'   },
+  FLAG:            { bg:'#7f1d1d', color:'#fca5a5', label:'FLAG'   },
+  CHALLENGE:       { bg:'#1e1b4b', color:'#c7d2fe', label:'CHALLENGE'},
 }
 const RISK_STYLE = {
   HIGH:  { color:'#ef4444' }, MEDIUM: { color:'#f59e0b' },
@@ -33,7 +33,7 @@ export default function AgentDecisionPanel({ workflowId }) {
 
   if (!decisions.length) return (
     <div style={{padding:'1.5rem',color:'#9CA3AF',textAlign:'center'}}>
-      <p style={{fontSize:'2rem'}}>⏳</p>
+      <p style={{fontSize:'0.85rem',color:'#94a3b8'}}>Running...</p>
       <p>Agent decisions will appear once the pipeline completes.</p>
     </div>
   )

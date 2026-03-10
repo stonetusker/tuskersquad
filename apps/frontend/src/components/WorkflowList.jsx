@@ -69,7 +69,7 @@ export default function WorkflowList({ onSelect, selectedId }) {
                     <span style={{ fontSize: 9, color: '#22c55e', fontWeight: 600 }}>🔀 merged</span>
                   )}
                   {w.deploy_status === 'triggered' && (
-                    <span style={{ fontSize: 9, color: '#3b82f6', fontWeight: 600 }}>🚀 deployed</span>
+                    <span style={{ fontSize: 9, color: '#3b82f6', fontWeight: 600 }}>deployed</span>
                   )}
                   <span style={{ color: '#d1d5db', marginLeft: 'auto', fontSize: 10 }}>
                     {w.created_at ? new Date(w.created_at).toLocaleTimeString() : ''}

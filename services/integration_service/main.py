@@ -232,20 +232,20 @@ async def gitea_webhook(request: Request):
     # 8. Post immediate "in-review" comment (fire-and-forget, don't block response)
     asyncio.create_task(_post_pr_comment(
         repository, pr_number,
-        "## 🔍 TuskerSquad Review Started\n\n"
+        "## TuskerSquad Review Started\n\n"
         f"> **{repository}** · PR #{pr_number} · `{action}`\n\n"
         "The 8-agent AI pipeline is now running. "
         "Each agent will post its findings as a comment when it completes.\n\n"
         "| Agent | Role |\n|-------|------|\n"
-        "| 🧭 Planner | Scope & strategy |\n"
-        "| ⚙️ Backend | API & pytest |\n"
-        "| 🎨 Frontend | UI / Playwright |\n"
-        "| 🔐 Security | OWASP probes |\n"
-        "| 📡 SRE | Latency & load |\n"
-        "| ⚔️ Challenger | False-positive audit |\n"
-        "| 📋 QA Lead | Risk synthesis |\n"
-        "| ⚖️ Judge | Final decision |\n\n"
-        "*Powered by TuskerSquad · Stonetusker Systems*"
+        "| Planner | Scope & strategy |\n"
+        "| Backend | API tests (pytest) |\n"
+        "| Frontend | UI tests (Playwright) |\n"
+        "| Security | OWASP probes |\n"
+        "| SRE | Latency & load tests |\n"
+        "| Challenger | False-positive audit |\n"
+        "| QA Lead | Risk synthesis |\n"
+        "| Judge | Final decision |\n\n"
+        "*TuskerSquad review complete.*"
     ))
 
     # 9. Trigger the review workflow
