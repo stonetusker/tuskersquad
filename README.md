@@ -1,20 +1,25 @@
 # TuskerSquad — Stonetusker Systems
 ### Agentic AI PR Governance Platform
 
-> **8 AI agents. One human decision. Automatic merge and deploy.**
+> **13 AI agents. One human decision. Automatic build, deploy, test, and merge.**
 
-TuskerSquad runs an autonomous 8-agent pipeline over every Pull Request:
-**Planner → Backend → Frontend → Security → SRE → Challenger → QA Lead → Judge**
+TuskerSquad runs an autonomous 13-agent pipeline over every Pull Request:
+**Planner → Backend → Frontend → Security → SRE → Builder → Deployer → Tester → Runtime Analyzer → Log Inspector → Correlator → Challenger → QA Lead → Judge**
 
 When the Judge flags `REVIEW_REQUIRED`, a human approves or rejects from the dashboard.
 On **Approve**, TuskerSquad can **automatically merge the PR** and **trigger your deploy pipeline** — zero manual steps.
 
 ---
 
-## ✨ What's New — Auto-Merge & Deploy
+## ✨ What's New — Build, Deploy, Test & Runtime Analysis
 
 | Feature | How |
 |---|---|
+| **Automatic Build** | Builder agent clones PR code and builds Docker images |
+| **Ephemeral Deploy** | Deployer creates isolated containers for each PR |
+| **Automated Testing** | Tester runs API, performance, and health tests |
+| **Runtime Analysis** | Runtime Analyzer examines logs, performance, and behavior |
+| **Code + Runtime Validation** | Combined static analysis + live testing before approval |
 | **Auto-Merge on Approve** | Calls the Gitea Merge API immediately after human APPROVE |
 | **Merge style** | `merge` / `rebase` / `squash` — configurable per deployment |
 | **Auto-Deploy after Merge** | Dispatches a Gitea Actions `workflow_dispatch` event |

@@ -419,6 +419,283 @@ def sre_node(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
+def builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the application from PR source code."""
+    workflow_id = state.get("workflow_id")
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "builder"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.builder.builder_agent", "run_builder_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                fid=fid,
+            )
+            findings         = result.get("findings", [])
+            fid              = result.get("fid", fid + len(findings))
+            build_success    = result.get("build_success", False)
+            build_artifacts  = result.get("build_artifacts", {})
+            log              = result.get("agent_log", {
+                "agent": "builder", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+
+            _post_agent_comment_now("builder", findings, state)
+            return {
+                "findings": findings,
+                "agent_logs": [log],
+                "_fid": fid,
+                "build_success": build_success,
+                "build_artifacts": build_artifacts,
+            }
+        except Exception as exc:
+            logger.exception("builder_agent_failed")
+            return {
+                "findings": [{
+                    "id": fid, "agent": "builder", "severity": "HIGH",
+                    "title": "Builder agent crashed", "description": str(exc),
+                    "test_name": "agent_crash",
+                }],
+                "agent_logs": [{
+                    "agent": "builder", "status": "FAILED",
+                    "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                    "error": str(exc),
+                }],
+                "_fid": fid + 1,
+            }
+    else:
+        return {
+            "findings": [{
+                "id": fid, "agent": "builder", "severity": "HIGH",
+                "title": "Builder agent not available", "description": "Builder agent module not found",
+                "test_name": "agent_missing",
+            }],
+            "agent_logs": [{
+                "agent": "builder", "status": "FAILED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            }],
+            "_fid": fid + 1,
+        }
+
+
+def deployer_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Deploy built application to ephemeral environment."""
+    workflow_id = state.get("workflow_id")
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "deployer"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.deployer.deployer_agent", "run_deployer_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                build_artifacts=state.get("build_artifacts", {}),
+                fid=fid,
+            )
+            findings         = result.get("findings", [])
+            fid              = result.get("fid", fid + len(findings))
+            deploy_success   = result.get("deploy_success", False)
+            deploy_url       = result.get("deploy_url", "")
+            container_name   = result.get("container_name", "")
+            log              = result.get("agent_log", {
+                "agent": "deployer", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+
+            _post_agent_comment_now("deployer", findings, state)
+            return {
+                "findings": findings,
+                "agent_logs": [log],
+                "_fid": fid,
+                "deploy_success": deploy_success,
+                "deploy_url": deploy_url,
+                "container_name": container_name,
+            }
+        except Exception as exc:
+            logger.exception("deployer_agent_failed")
+            return {
+                "findings": [{
+                    "id": fid, "agent": "deployer", "severity": "HIGH",
+                    "title": "Deployer agent crashed", "description": str(exc),
+                    "test_name": "agent_crash",
+                }],
+                "agent_logs": [{
+                    "agent": "deployer", "status": "FAILED",
+                    "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                    "error": str(exc),
+                }],
+                "_fid": fid + 1,
+            }
+    else:
+        return {
+            "findings": [{
+                "id": fid, "agent": "deployer", "severity": "HIGH",
+                "title": "Deployer agent not available", "description": "Deployer agent module not found",
+                "test_name": "agent_missing",
+            }],
+            "agent_logs": [{
+                "agent": "deployer", "status": "FAILED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            }],
+            "_fid": fid + 1,
+        }
+
+
+def tester_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute automated tests against deployed application."""
+    workflow_id = state.get("workflow_id")
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "tester"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.tester.tester_agent", "run_tester_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                deploy_url=state.get("deploy_url", ""),
+                fid=fid,
+            )
+            findings         = result.get("findings", [])
+            fid              = result.get("fid", fid + len(findings))
+            test_success     = result.get("test_success", False)
+            test_results     = result.get("test_results", {})
+            log              = result.get("agent_log", {
+                "agent": "tester", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+
+            _post_agent_comment_now("tester", findings, state)
+            return {
+                "findings": findings,
+                "agent_logs": [log],
+                "_fid": fid,
+                "test_success": test_success,
+                "test_results": test_results,
+            }
+        except Exception as exc:
+            logger.exception("tester_agent_failed")
+            return {
+                "findings": [{
+                    "id": fid, "agent": "tester", "severity": "HIGH",
+                    "title": "Tester agent crashed", "description": str(exc),
+                    "test_name": "agent_crash",
+                }],
+                "agent_logs": [{
+                    "agent": "tester", "status": "FAILED",
+                    "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                    "error": str(exc),
+                }],
+                "_fid": fid + 1,
+            }
+    else:
+        return {
+            "findings": [{
+                "id": fid, "agent": "tester", "severity": "HIGH",
+                "title": "Tester agent not available", "description": "Tester agent module not found",
+                "test_name": "agent_missing",
+            }],
+            "agent_logs": [{
+                "agent": "tester", "status": "FAILED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            }],
+            "_fid": fid + 1,
+        }
+
+
+def runtime_analyzer_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Analyze runtime behavior and test results."""
+    workflow_id = state.get("workflow_id")
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "runtime_analyzer"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.runtime_analyzer.runtime_analyzer_agent", "run_runtime_analyzer_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                deploy_url=state.get("deploy_url", ""),
+                test_results=state.get("test_results", {}),
+                container_name=state.get("container_name", ""),
+                fid=fid,
+            )
+            findings         = result.get("findings", [])
+            fid              = result.get("fid", fid + len(findings))
+            analysis_results = result.get("analysis_results", {})
+            log              = result.get("agent_log", {
+                "agent": "runtime_analyzer", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+
+            _post_agent_comment_now("runtime_analyzer", findings, state)
+            return {
+                "findings": findings,
+                "agent_logs": [log],
+                "_fid": fid,
+                "analysis_results": analysis_results,
+            }
+        except Exception as exc:
+            logger.exception("runtime_analyzer_agent_failed")
+            return {
+                "findings": [{
+                    "id": fid, "agent": "runtime_analyzer", "severity": "HIGH",
+                    "title": "Runtime analyzer agent crashed", "description": str(exc),
+                    "test_name": "agent_crash",
+                }],
+                "agent_logs": [{
+                    "agent": "runtime_analyzer", "status": "FAILED",
+                    "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                    "error": str(exc),
+                }],
+                "_fid": fid + 1,
+            }
+    else:
+        return {
+            "findings": [{
+                "id": fid, "agent": "runtime_analyzer", "severity": "HIGH",
+                "title": "Runtime analyzer agent not available", "description": "Runtime analyzer agent module not found",
+                "test_name": "agent_missing",
+            }],
+            "agent_logs": [{
+                "agent": "runtime_analyzer", "status": "FAILED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            }],
+            "_fid": fid + 1,
+        }
+
+
 def log_inspector_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Read /logs/events from every microservice and post observations to bus_observations.
     Placed after sre_node so the correlator can join client and server findings.
@@ -848,6 +1125,10 @@ def build_graph():
         builder.add_node("frontend",      frontend_node)
         builder.add_node("security",      security_node)
         builder.add_node("sre",           sre_node)
+        builder.add_node("builder",       builder_node)
+        builder.add_node("deployer",      deployer_node)
+        builder.add_node("tester",        tester_node)
+        builder.add_node("runtime_analyzer", runtime_analyzer_node)
         builder.add_node("log_inspector", log_inspector_node)   # reads microservice logs
         builder.add_node("correlator",    correlator_node)      # joins all findings into root cause chains
         builder.add_node("challenger",    challenger_node)
@@ -863,7 +1144,11 @@ def build_graph():
         builder.add_edge("backend",      "frontend")
         builder.add_edge("frontend",     "security")
         builder.add_edge("security",     "sre")
-        builder.add_edge("sre",          "log_inspector")  # log inspector runs after client-side agents
+        builder.add_edge("sre",          "builder")
+        builder.add_edge("builder",      "deployer")
+        builder.add_edge("deployer",     "tester")
+        builder.add_edge("tester",       "runtime_analyzer")
+        builder.add_edge("runtime_analyzer", "log_inspector")  # log inspector runs after runtime analysis
         builder.add_edge("log_inspector","correlator")     # correlator joins client and server findings
         builder.add_edge("correlator",   "challenger")
         builder.add_edge("challenger",   "qa_lead")

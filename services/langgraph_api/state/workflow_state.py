@@ -36,6 +36,18 @@ try:
         # diff_relevance (direct | related | unrelated | systemic | unknown).
         diff_context: Dict[str, Any]
         git_provider: str           # "gitea" | "github" | "gitlab"
+        # ── Build phase outputs ───────────────────────────────────────────────
+        build_success: bool
+        build_artifacts: Dict[str, Any]
+        # ── Deploy phase outputs ──────────────────────────────────────────────
+        deploy_success: bool
+        deploy_url: str
+        container_name: str
+        # ── Test phase outputs ────────────────────────────────────────────────
+        test_success: bool
+        test_results: Dict[str, Any]
+        # ── Runtime analysis outputs ──────────────────────────────────────────
+        analysis_results: Dict[str, Any]
         # ── Root cause analysis output (set by correlator agent) ───────────────
         root_cause_chains: List[Dict[str, Any]]
         developer_brief: str
@@ -63,6 +75,14 @@ except ImportError:
         bus_observations: List[Dict[str, Any]]
         diff_context: Dict[str, Any]
         git_provider: str
+        build_success: bool
+        build_artifacts: Dict[str, Any]
+        deploy_success: bool
+        deploy_url: str
+        container_name: str
+        test_success: bool
+        test_results: Dict[str, Any]
+        analysis_results: Dict[str, Any]
         root_cause_chains: List[Dict[str, Any]]
         developer_brief: str
         qa_summary: str
