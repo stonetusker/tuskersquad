@@ -186,20 +186,62 @@ def _llm_finding_or_synthetic(
 
 def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Planner Agent — analyses the PR diff and decides which engineering
-    agents to run.  Currently deterministic; LLM reasoning can be added
-    when the orchestration is stable.
+    Planner Agent — fetches the PR diff from the active git provider,
+    analyses risk areas, and populates diff_context on the workflow state.
+
+    Every downstream agent reads state['diff_context'] so findings can be
+    annotated with diff_relevance (direct | related | unrelated | systemic).
     """
-    fid = state.get("_fid", 1)
-    now = datetime.utcnow().isoformat()
+    workflow_id = state.get("workflow_id")
+    repository  = state.get("repository", "")
+    pr_number   = state.get("pr_number", 0)
+    git_provider = state.get("git_provider", os.getenv("GIT_PROVIDER", "gitea"))
+    fid  = state.get("_fid", 1)
+    start = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "planner"})
+    except Exception:
+        pass
+
+    # ── Fetch diff from the active provider ──────────────────────────────────
+    diff_context: Dict[str, Any] = {}
+    planner_context_text = ""
+    try:
+        from ..core.diff_analyzer import fetch_and_analyse_diff, build_planner_context
+        diff_context = fetch_and_analyse_diff(repository, pr_number, git_provider)
+        planner_context_text = build_planner_context(diff_context)
+        logger.info(
+            "planner_diff_fetched workflow=%s provider=%s files=%d risk_flags=%s",
+            workflow_id, git_provider,
+            diff_context.get("total_files_changed", 0),
+            diff_context.get("risk_flags", []),
+        )
+    except Exception:
+        logger.exception("planner_diff_fetch_failed workflow=%s — continuing without diff", workflow_id)
+        diff_context = {"available": False, "provider": git_provider,
+                        "owner_repo": repository, "pr_number": pr_number}
+
     log = {
         "agent": "planner",
         "status": "COMPLETED",
-        "started_at": now,
-        "completed_at": now,
+        "started_at": start.isoformat(),
+        "completed_at": datetime.utcnow().isoformat(),
+        "diff_available": diff_context.get("available", False),
+        "files_changed": diff_context.get("total_files_changed", 0),
+        "risk_flags": diff_context.get("risk_flags", []),
     }
-    logger.info("node_completed node=planner workflow=%s", state.get("workflow_id"))
-    return {"agent_logs": [log], "_fid": fid}
+    logger.info(
+        "node_completed node=planner workflow=%s diff=%s",
+        workflow_id, diff_context.get("available", False),
+    )
+    return {
+        "agent_logs":    [log],
+        "diff_context":  diff_context,
+        "git_provider":  git_provider,
+        "_fid":          fid,
+    }
 
 
 def _run_eng_agent(
@@ -211,12 +253,15 @@ def _run_eng_agent(
 ) -> Dict[str, Any]:
     """
     Generic engineering agent runner used by backend/frontend/security/sre nodes.
+    Passes diff_context to agent runners (if they accept it).
+    Annotates returned findings with diff_relevance metadata.
     Tries the real agent module first; falls back to LLM/synthetic.
     """
-    workflow_id = state.get("workflow_id")
-    repository = state.get("repository", "unknown/repo")
-    pr_number = state.get("pr_number", 0)
-    fid = state.get("_fid", 1)
+    workflow_id  = state.get("workflow_id")
+    repository   = state.get("repository", "unknown/repo")
+    pr_number    = state.get("pr_number", 0)
+    fid          = state.get("_fid", 1)
+    diff_context = state.get("diff_context", {})
 
     findings: List[Dict[str, Any]] = []
     start = datetime.utcnow()
@@ -231,12 +276,19 @@ def _run_eng_agent(
     runner = _import_runner(module_path, fn_name)
     if runner:
         try:
-            result = runner(
+            import inspect
+            sig = inspect.signature(runner)
+            # Pass diff_context only if the agent function accepts it
+            kwargs: Dict[str, Any] = dict(
                 workflow_id=workflow_id,
                 repository=repository,
                 pr_number=pr_number,
                 fid=fid,
             )
+            if "diff_context" in sig.parameters:
+                kwargs["diff_context"] = diff_context
+
+            result = runner(**kwargs)
             agent_findings = result.get("findings", [])
             findings.extend(agent_findings)
             fid = result.get("fid", fid + len(agent_findings))
@@ -267,6 +319,14 @@ def _run_eng_agent(
             "started_at": start.isoformat(),
             "completed_at": datetime.utcnow().isoformat(),
         }
+
+    # Annotate findings with diff-awareness metadata
+    if diff_context.get("available") and findings:
+        try:
+            from ..core.diff_analyzer import annotate_findings_with_diff
+            findings = annotate_findings_with_diff(findings, diff_context)
+        except Exception:
+            logger.debug("diff_annotation_failed agent=%s", agent_name)
 
     logger.info("node_completed node=%s workflow=%s findings=%d", agent_name, workflow_id, len(findings))
     return {"findings": findings, "agent_logs": [log], "_fid": fid}
@@ -409,6 +469,16 @@ def correlator_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     logger.info("node_completed node=correlator workflow=%s chains=%d",
                 workflow_id, len(root_cause_chains))
+
+    # Annotate correlator findings with diff relevance
+    diff_context = state.get("diff_context", {})
+    if diff_context.get("available") and new_findings:
+        try:
+            from ..core.diff_analyzer import annotate_findings_with_diff
+            new_findings = annotate_findings_with_diff(new_findings, diff_context)
+        except Exception:
+            logger.debug("correlator_diff_annotation_failed")
+
     return {
         "findings":          new_findings,
         "root_cause_chains": root_cause_chains,
@@ -816,9 +886,11 @@ class LangGraphWrapper:
             "findings":          [],
             "challenges":        [],
             "agent_logs":        [],
-            "bus_observations":  [],      # CorrelationBus — agents post & read observations
-            "root_cause_chains": [],      # set by correlator
-            "developer_brief":   "",      # set by correlator
+            "bus_observations":  [],
+            "diff_context":      {},           # populated by planner_node
+            "git_provider":      state.get("git_provider", os.getenv("GIT_PROVIDER", "gitea")),
+            "root_cause_chains": [],
+            "developer_brief":   "",
             "qa_summary":        "",
             "risk_level":        "LOW",
             "decision":          "",
@@ -886,6 +958,8 @@ class SimpleGraph:
             "challenges":        [],
             "agent_logs":        [],
             "bus_observations":  [],
+            "diff_context":      {},
+            "git_provider":      state.get("git_provider", os.getenv("GIT_PROVIDER", "gitea")),
             "root_cause_chains": [],
             "developer_brief":   "",
             "qa_summary":        "",

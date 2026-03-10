@@ -131,6 +131,12 @@ async def get_reasoning(workflow_id: str):
 async def get_llm_logs(workflow_id: str):
     return await _get(f"{LANGGRAPH_URL}/api/workflows/{workflow_id}/llm-logs")
 
+@app.get("/api/ui/workflow/{workflow_id}/diff")
+async def get_diff(workflow_id: str):
+    """Proxy: diff context and git provider info fetched by the planner agent."""
+    return await _get(f"{LANGGRAPH_URL}/api/workflows/{workflow_id}/diff")
+
+
 @app.get("/api/ui/workflow/{workflow_id}/agent-decisions")
 async def get_agent_decisions(workflow_id: str):
     return await _get(f"{LANGGRAPH_URL}/api/workflows/{workflow_id}/agent-decisions")

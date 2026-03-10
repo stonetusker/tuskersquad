@@ -29,9 +29,13 @@ try:
         challenges: Annotated[List[Dict[str, Any]], _append]
         agent_logs: Annotated[List[Dict[str, Any]], _append]
         # ── Cross-agent communication ──────────────────────────────────────────
-        # bus_observations: every agent can post observations here; later agents read all of them.
-        # Models the real-world QA process: client tester + server log inspector share evidence.
         bus_observations: Annotated[List[Dict[str, Any]], _append]
+        # ── Diff-aware analysis (set by planner_node) ─────────────────────────
+        # diff_context: structured PR diff — files changed, risk flags, changed lines.
+        # All agents read this; correlator uses it to annotate findings with
+        # diff_relevance (direct | related | unrelated | systemic | unknown).
+        diff_context: Dict[str, Any]
+        git_provider: str           # "gitea" | "github" | "gitlab"
         # ── Root cause analysis output (set by correlator agent) ───────────────
         root_cause_chains: List[Dict[str, Any]]
         developer_brief: str
@@ -47,7 +51,6 @@ try:
         _fid: int
 
 except ImportError:
-    # Fallback: plain TypedDict from stdlib (no Annotated reducers)
     from typing import TypedDict
 
     class TuskerState(TypedDict):  # type: ignore[no-redef]
@@ -58,6 +61,8 @@ except ImportError:
         challenges: List[Dict[str, Any]]
         agent_logs: List[Dict[str, Any]]
         bus_observations: List[Dict[str, Any]]
+        diff_context: Dict[str, Any]
+        git_provider: str
         root_cause_chains: List[Dict[str, Any]]
         developer_brief: str
         qa_summary: str

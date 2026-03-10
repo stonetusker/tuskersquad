@@ -53,6 +53,7 @@ router = APIRouter(prefix="", tags=["workflow"])
 class StartWorkflow(BaseModel):
     repo:      str = Field(..., description="owner/repo")
     pr_number: int = Field(..., description="Pull request number")
+    provider:  str = Field(default="", description="git provider: gitea|github|gitlab (auto-detected if empty)")
 
 
 class ReleaseOverride(BaseModel):
@@ -102,33 +103,40 @@ def _run_merge_and_deploy(
     findings, qa_summary, risk_level, rationale,
     agent_decisions=None,
     is_release=False, release_reason="",
+    git_provider: str = "",
 ):
     from ..db.database import SessionLocal
+    from ..core.git_provider import get_provider
     db      = SessionLocal()
     wf_repo = WorkflowRepository(db)
     merged  = deployed = False
     deploy_url = ""
 
+    # Use provider-aware client for merge/label/deploy
+    provider_name = git_provider or os.getenv("GIT_PROVIDER", "gitea")
+    provider = get_provider(provider_name)
+
     try:
         if _flag("AUTO_MERGE_ON_APPROVE"):
             wf_repo.update_merge_status(workflow_id, "pending")
-            result = merge_pr_sync(repository, pr_number)
+            merge_style = os.getenv("MERGE_STYLE", "merge")
+            result = provider.merge_pr(repository, pr_number, merge_style)
             if result and result.get("success"):
                 merged = True
-                wf_repo.update_merge_status(workflow_id, "success", result.get("sha"))
+                wf_repo.update_merge_status(workflow_id, "success", result.get("sha", ""))
                 workflow_registry.update_workflow_sync(workflow_id, {
                     "workflow_id": workflow_id, "merge_status": "success"
                 })
-                set_pr_label(repository, pr_number, "tuskersquad:approved")
+                provider.set_label(repository, pr_number, "tuskersquad:approved")
             else:
                 wf_repo.update_merge_status(workflow_id, "failed")
         else:
             wf_repo.update_merge_status(workflow_id, "skipped")
-            set_pr_label(repository, pr_number, "tuskersquad:approved")
+            provider.set_label(repository, pr_number, "tuskersquad:approved")
 
         if merged and _flag("DEPLOY_ON_MERGE"):
             wf_repo.update_deploy_status(workflow_id, "pending")
-            deploy = trigger_deploy_pipeline(repository, pr_number, workflow_id)
+            deploy = provider.trigger_pipeline(repository, pr_number, workflow_id)
             deploy_url = deploy.get("url", "")
             if deploy and deploy.get("success"):
                 deployed = True
@@ -138,7 +146,7 @@ def _run_merge_and_deploy(
                     "deploy_status": "triggered",
                     "deploy_url": deploy_url,
                 })
-                set_pr_label(repository, pr_number, "tuskersquad:deployed")
+                provider.set_label(repository, pr_number, "tuskersquad:deployed")
             else:
                 wf_repo.update_deploy_status(workflow_id, "failed", deploy_url)
         elif not _flag("DEPLOY_ON_MERGE"):
@@ -155,10 +163,11 @@ def _run_merge_and_deploy(
             deployed=deployed,
             deploy_url=deploy_url,
         )
-        post_pr_comment_sync(repository, pr_number, body)
+        provider.post_comment(repository, pr_number, body)
 
     except Exception:
-        logger.exception("merge_deploy_thread_failed workflow=%s", workflow_id)
+        logger.exception("merge_deploy_thread_failed workflow=%s provider=%s",
+                         workflow_id, provider_name)
     finally:
         db.close()
 
@@ -172,11 +181,21 @@ async def start_workflow(
     db: Session = Depends(get_db),
 ):
     repo     = WorkflowRepository(db)
+    # Auto-detect provider from repo name if not explicitly supplied
+    provider = payload.provider or os.getenv("GIT_PROVIDER", "gitea")
+    if not payload.provider:
+        try:
+            from ..core.git_provider import detect_provider_from_repo
+            provider = detect_provider_from_repo(payload.repo) or provider
+        except Exception:
+            pass
+
     workflow = repo.create_workflow_run(repository=payload.repo, pr_number=payload.pr_number)
     state = {
         "workflow_id":    str(workflow.id),
         "repository":     payload.repo,
         "pr_number":      payload.pr_number,
+        "git_provider":   provider,
         "status":         workflow.status,
         "findings":       [],
         "challenges":     [],
@@ -187,8 +206,9 @@ async def start_workflow(
     }
     await workflow_registry.register_workflow(state)
     threading.Thread(target=execute_workflow, args=(str(workflow.id),), daemon=True).start()
-    logger.info("workflow_started id=%s repo=%s pr=%s", workflow.id, payload.repo, payload.pr_number)
-    return {"workflow_id": str(workflow.id), "status": workflow.status}
+    logger.info("workflow_started id=%s repo=%s pr=%s provider=%s",
+                workflow.id, payload.repo, payload.pr_number, provider)
+    return {"workflow_id": str(workflow.id), "status": workflow.status, "provider": provider}
 
 
 # ─── List / Get ───────────────────────────────────────────────────────────────
@@ -383,6 +403,31 @@ def get_agent_decisions(workflow_id: str, db: Session = Depends(get_db)):
     except Exception:
         pass
     return []
+
+
+
+@router.get("/workflows/{workflow_id}/diff")
+async def get_diff_context(workflow_id: str):
+    """
+    Returns the diff context fetched by the planner agent for this workflow.
+    Includes: files changed, risk flags, PR metadata, provider name.
+    Findings also carry diff_relevance: direct | related | unrelated | systemic.
+    """
+    try:
+        from ..core.workflow_registry import workflow_registry as reg_
+        state = await reg_.get_workflow(workflow_id)
+        if state:
+            diff_ctx = state.get("diff_context", {})
+            display  = {k: v for k, v in diff_ctx.items() if k != "_changed_lines_by_file"}
+            return {
+                "workflow_id":  workflow_id,
+                "git_provider": state.get("git_provider", ""),
+                "diff_context": display,
+                "available":    diff_ctx.get("available", False),
+            }
+    except Exception:
+        logger.debug("get_diff_context_failed workflow=%s", workflow_id)
+    return {"workflow_id": workflow_id, "git_provider": "", "diff_context": {}, "available": False}
 
 
 # ─── APPROVE ─────────────────────────────────────────────────────────────────

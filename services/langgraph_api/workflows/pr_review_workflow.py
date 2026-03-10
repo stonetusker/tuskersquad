@@ -302,9 +302,23 @@ def execute_workflow(workflow_id: str) -> None:
         repository = wf.repository if wf else "unknown/repo"
         pr_number  = wf.pr_number  if wf else 0
 
+        # Detect which git provider owns this repo
+        git_provider = os.getenv("GIT_PROVIDER", "gitea")
+        try:
+            from ..core.git_provider import detect_provider_from_repo
+            git_provider = detect_provider_from_repo(repository) or git_provider
+        except Exception:
+            pass
+
         t0     = time.time()
-        result = graph.invoke({"workflow_id": workflow_id, "repository": repository, "pr_number": pr_number})
-        logger.info("graph_invoke_done workflow=%s duration=%.2fs", workflow_id, time.time() - t0)
+        result = graph.invoke({
+            "workflow_id":  workflow_id,
+            "repository":   repository,
+            "pr_number":    pr_number,
+            "git_provider": git_provider,
+        })
+        logger.info("graph_invoke_done workflow=%s provider=%s duration=%.2fs",
+                    workflow_id, git_provider, time.time() - t0)
 
         id_map, agent_decisions = _persist_results(
             db, workflow_id, result,
@@ -315,14 +329,22 @@ def execute_workflow(workflow_id: str) -> None:
         rationale  = result.get("rationale", "")
         qa_summary = result.get("qa_summary", "")
         risk_level = result.get("risk_level", "LOW")
+        diff_context = result.get("diff_context", {})
 
-        # Store agent_decisions in registry for UI reasoning viewer
+        # Store agent_decisions and diff_context in registry for UI
         _update_registry(workflow_id, "RUNNING", rationale, qa_summary, risk_level,
-                         extra={"agent_decisions": agent_decisions,
-                                "agent_reasoning": [
-                                    {"agent": a, "output": d.get("summary", "")}
-                                    for a, d in agent_decisions.items()
-                                ]})
+                         extra={
+                             "agent_decisions": agent_decisions,
+                             "git_provider": git_provider,
+                             "diff_context": {
+                                 k: v for k, v in diff_context.items()
+                                 if k != "_changed_lines_by_file"  # too large for registry
+                             },
+                             "agent_reasoning": [
+                                 {"agent": a, "output": d.get("summary", "")}
+                                 for a, d in agent_decisions.items()
+                             ],
+                         })
 
         try:
             action = gov_repo.create_decision(workflow_id, decision)
