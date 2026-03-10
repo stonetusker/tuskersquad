@@ -1,118 +1,208 @@
 #!/bin/sh
 # gitea_setup.sh
 #
-# Runs once in the gitea-setup container after Gitea is healthy.
-# Creates the shopflow repo and registers the TuskerSquad webhook.
-# Safe to run multiple times - checks before creating anything.
+# Initializes Gitea after it becomes healthy.
+# Responsibilities:
+#   - Wait for Gitea API readiness
+#   - Verify admin authentication
+#   - Create repository if missing
+#   - Register TuskerSquad webhook
 #
-# Auth: uses GITEA_TOKEN if set, otherwise basic auth with admin credentials.
-# The admin user is created by gitea_init.sh inside the Gitea container.
+# Safe to run multiple times.
 
 set -e
 
+########################################
+# Configuration
+########################################
+
 GITEA_URL="${GITEA_URL:-http://tuskersquad-gitea:3000}"
+API="${GITEA_URL}/api/v1"
+
 ADMIN_USER="${GITEA_ADMIN_USER:-tusker}"
 ADMIN_PASS="${GITEA_ADMIN_PASS:-tusker1234}"
+
 REPO_NAME="${REPO_NAME:-shopflow}"
+
 INTEGRATION_URL="${INTEGRATION_URL:-http://tuskersquad-integration:8001}"
-WEBHOOK_SECRET="${GITEA_WEBHOOK_SECRET:-}"
-API="${GITEA_URL}/api/v1"
 WEBHOOK_URL="${INTEGRATION_URL}/gitea/webhook"
 
-echo "[gitea-setup] Gitea:   ${GITEA_URL}"
-echo "[gitea-setup] Repo:    ${ADMIN_USER}/${REPO_NAME}"
-echo "[gitea-setup] Webhook: ${WEBHOOK_URL}"
+WEBHOOK_SECRET="${GITEA_WEBHOOK_SECRET:-}"
 
-# Pick auth method
+MAX_RETRIES=40
+SLEEP_TIME=3
+
+########################################
+# Logging helper
+########################################
+
+log() {
+    echo "[gitea-setup] $1"
+}
+
+########################################
+# Authentication
+########################################
+
 if [ -n "${GITEA_TOKEN}" ]; then
     AUTH_HEADER="Authorization: token ${GITEA_TOKEN}"
-    echo "[gitea-setup] Auth: token"
+    log "Auth method: token"
 else
     ENCODED=$(printf '%s:%s' "${ADMIN_USER}" "${ADMIN_PASS}" | base64 | tr -d '\n')
     AUTH_HEADER="Authorization: Basic ${ENCODED}"
-    echo "[gitea-setup] Auth: basic (${ADMIN_USER})"
+    log "Auth method: basic (${ADMIN_USER})"
 fi
 
-# Wait for Gitea root to return 200
-echo "[gitea-setup] Waiting for Gitea to be ready..."
-MAX=30
+########################################
+# Wait for Gitea API
+########################################
+
+log "Waiting for Gitea API..."
+
 i=0
 CODE="000"
-while [ $i -lt $MAX ]; do
-    CODE=$(curl -s -o /dev/null -w "%{http_code}" "${GITEA_URL}/" 2>/dev/null || echo "000")
+
+while [ $i -lt $MAX_RETRIES ]; do
+
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        "${API}/version" || echo "000")
+
     if [ "$CODE" = "200" ]; then
-        echo "[gitea-setup] Gitea ready (HTTP 200)"
+        log "Gitea API ready"
         break
     fi
-    i=$((i + 1))
-    echo "[gitea-setup] Attempt $i/$MAX HTTP $CODE - waiting 3s..."
-    sleep 3
+
+    log "Attempt $((i+1))/${MAX_RETRIES} HTTP ${CODE}"
+    sleep "${SLEEP_TIME}"
+    i=$((i+1))
+
 done
+
 if [ "$CODE" != "200" ]; then
-    echo "[gitea-setup] ERROR: Gitea not ready after ${MAX} attempts"
+    log "ERROR: Gitea API not ready"
     exit 1
 fi
 
-# Extra wait for gitea_init.sh to finish creating the admin user
-sleep 3
+########################################
+# Wait for admin authentication
+########################################
 
-# Verify auth
-echo "[gitea-setup] Checking credentials..."
-AUTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "${AUTH_HEADER}" "${API}/user" 2>/dev/null || echo "000")
-if [ "$AUTH_CHECK" != "200" ]; then
-    echo "[gitea-setup] Auth returned HTTP ${AUTH_CHECK} - waiting 5s for admin creation..."
-    sleep 5
-    AUTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
-        -H "${AUTH_HEADER}" "${API}/user" 2>/dev/null || echo "000")
-fi
-if [ "$AUTH_CHECK" != "200" ]; then
-    echo "[gitea-setup] Auth failed (HTTP ${AUTH_CHECK}). Check credentials. Skipping setup."
-    exit 0
-fi
-echo "[gitea-setup] Auth OK"
+log "Waiting for admin authentication..."
 
-# Create repo if missing
-echo "[gitea-setup] Checking repo ${ADMIN_USER}/${REPO_NAME}..."
+i=0
+AUTH_CODE="000"
+
+while [ $i -lt $MAX_RETRIES ]; do
+
+    AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "${AUTH_HEADER}" \
+        "${API}/user" || echo "000")
+
+    if [ "$AUTH_CODE" = "200" ]; then
+        log "Admin authentication OK"
+        break
+    fi
+
+    log "Admin not ready yet (HTTP ${AUTH_CODE})"
+    sleep "${SLEEP_TIME}"
+    i=$((i+1))
+
+done
+
+if [ "$AUTH_CODE" != "200" ]; then
+    log "ERROR: Admin authentication failed"
+    exit 1
+fi
+
+########################################
+# Repository setup
+########################################
+
+log "Checking repository ${ADMIN_USER}/${REPO_NAME}..."
+
 REPO_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "${AUTH_HEADER}" "${API}/repos/${ADMIN_USER}/${REPO_NAME}" 2>/dev/null || echo "000")
+    -H "${AUTH_HEADER}" \
+    "${API}/repos/${ADMIN_USER}/${REPO_NAME}" || echo "000")
 
 if [ "$REPO_CODE" = "200" ]; then
-    echo "[gitea-setup] Repo exists, skipping"
+    log "Repository already exists"
 else
+
+    log "Creating repository ${REPO_NAME}"
+
     CREATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST \
         -H "${AUTH_HEADER}" \
         -H "Content-Type: application/json" \
-        -d "{\"name\":\"${REPO_NAME}\",\"description\":\"ShopFlow demo app\",\"private\":false,\"auto_init\":true,\"default_branch\":\"main\"}" \
-        "${API}/user/repos" 2>/dev/null || echo "000")
-    echo "[gitea-setup] Repo create HTTP ${CREATE_CODE}"
+        -d "{
+            \"name\": \"${REPO_NAME}\",
+            \"description\": \"ShopFlow demo application\",
+            \"private\": false,
+            \"auto_init\": true,
+            \"default_branch\": \"main\"
+        }" \
+        "${API}/user/repos" || echo "000")
+
+    log "Repository creation HTTP ${CREATE_CODE}"
+
+    if [ "$CREATE_CODE" != "201" ]; then
+        log "ERROR: Repository creation failed"
+        exit 1
+    fi
 fi
 
-# Register webhook if missing
-echo "[gitea-setup] Checking webhooks..."
-HOOKS=$(curl -s -H "${AUTH_HEADER}" \
-    "${API}/repos/${ADMIN_USER}/${REPO_NAME}/hooks" 2>/dev/null || echo "[]")
+########################################
+# Webhook setup
+########################################
+
+log "Checking webhook registration..."
+
+HOOKS=$(curl -s \
+    -H "${AUTH_HEADER}" \
+    "${API}/repos/${ADMIN_USER}/${REPO_NAME}/hooks" || echo "[]")
 
 if echo "$HOOKS" | grep -q "${WEBHOOK_URL}"; then
-    echo "[gitea-setup] Webhook already registered"
+    log "Webhook already registered"
 else
+
+    log "Registering webhook"
+
     HOOK_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST \
         -H "${AUTH_HEADER}" \
         -H "Content-Type: application/json" \
-        -d "{\"type\":\"gitea\",\"config\":{\"url\":\"${WEBHOOK_URL}\",\"content_type\":\"json\",\"secret\":\"${WEBHOOK_SECRET}\"},\"events\":[\"pull_request\"],\"active\":true}" \
-        "${API}/repos/${ADMIN_USER}/${REPO_NAME}/hooks" 2>/dev/null || echo "000")
-    echo "[gitea-setup] Webhook register HTTP ${HOOK_CODE}"
+        -d "{
+            \"type\": \"gitea\",
+            \"config\": {
+                \"url\": \"${WEBHOOK_URL}\",
+                \"content_type\": \"json\",
+                \"secret\": \"${WEBHOOK_SECRET}\"
+            },
+            \"events\": [\"pull_request\"],
+            \"active\": true
+        }" \
+        "${API}/repos/${ADMIN_USER}/${REPO_NAME}/hooks" || echo "000")
+
+    log "Webhook register HTTP ${HOOK_CODE}"
+
+    if [ "$HOOK_CODE" != "201" ]; then
+        log "ERROR: Webhook registration failed"
+        exit 1
+    fi
 fi
 
-echo "[gitea-setup] Setup complete"
-echo "[gitea-setup]   Gitea UI: ${GITEA_URL}"
-echo "[gitea-setup]   Repo:     ${GITEA_URL}/${ADMIN_USER}/${REPO_NAME}"
-echo "[gitea-setup]   Webhook:  ${WEBHOOK_URL}"
+########################################
+# Completion
+########################################
+
+log "Setup complete"
+log "Gitea UI:  ${GITEA_URL}"
+log "Repository: ${GITEA_URL}/${ADMIN_USER}/${REPO_NAME}"
+log "Webhook:   ${WEBHOOK_URL}"
+
 echo ""
-echo "[gitea-setup] To post PR comments, generate a token:"
-echo "[gitea-setup]   1. Open ${GITEA_URL}/user/settings/applications"
-echo "[gitea-setup]   2. Create token (scopes: repository + issue read/write)"
-echo "[gitea-setup]   3. Set GITEA_TOKEN=<token> in infra/.env"
-echo "[gitea-setup]   4. Run: docker compose -f infra/docker-compose.yml restart"
+log "To enable PR comment posting:"
+log "1. Open ${GITEA_URL}/user/settings/applications"
+log "2. Create token (repo + issue permissions)"
+log "3. Set GITEA_TOKEN=<token> in infra/.env"
+log "4. Restart containers"
