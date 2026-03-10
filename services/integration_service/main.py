@@ -5,10 +5,10 @@ Receives webhooks from Gitea, GitHub, and GitLab.
 Triggers the LangGraph review pipeline on PR/MR events.
 
 Webhook endpoints:
-  POST /gitea/webhook    — Gitea pull_request events
-  POST /github/webhook   — GitHub pull_request events
-  POST /gitlab/webhook   — GitLab merge_request events
-  POST /webhook/simulate — Manual trigger for any provider (testing)
+  POST /gitea/webhook    - Gitea pull_request events
+  POST /github/webhook   - GitHub pull_request events
+  POST /gitlab/webhook   - GitLab merge_request events
+  POST /webhook/simulate - Manual trigger for any provider (testing)
 """
 
 import asyncio
@@ -61,7 +61,6 @@ _SRE_TOOL      = os.getenv("SRE_LOAD_TOOL",      "httpx")
 
 @app.on_event("startup")
 async def _startup_log():
-    logger.info("=" * 60)
     logger.info("TuskerSquad Integration Service v2 starting")
     logger.info("  Gitea  : token=%s secret=%s -> POST /gitea/webhook",
                 bool(GITEA_TOKEN), bool(GITEA_WEBHOOK_SECRET))
@@ -70,10 +69,9 @@ async def _startup_log():
     logger.info("  GitLab : token=%s secret=%s -> POST /gitlab/webhook",
                 bool(GITLAB_TOKEN), bool(GITLAB_WEBHOOK_SECRET))
     logger.info("  LangGraph : %s", LANGGRAPH_URL)
-    logger.info("=" * 60)
 
 
-# ── HTTP helpers ──────────────────────────────────────────────────────────────
+# HTTP helpers
 
 async def _post_with_retries(url: str, body: dict, retries: int = 3) -> dict:
     last_exc: Optional[Exception] = None
@@ -98,7 +96,7 @@ async def _start_workflow(repository: str, pr_number: int, provider: str = "gite
     )
 
 
-# ── "Review started" comment body ─────────────────────────────────────────────
+# "Review started" comment body
 
 def _review_started_body(provider: str, repository: str,
                           pr_number: int, action: str) -> str:
@@ -121,7 +119,7 @@ def _review_started_body(provider: str, repository: str,
     )
 
 
-# ── Provider comment helpers ───────────────────────────────────────────────────
+# Provider comment helpers
 
 async def _post_gitea_comment(repo: str, pr_number: int, body: str) -> bool:
     if not GITEA_TOKEN:
@@ -194,7 +192,7 @@ async def _post_gitlab_comment(repo: str, mr_number: int, body: str) -> bool:
         return False
 
 
-# ── Signature verification ────────────────────────────────────────────────────
+# Signature verification
 
 def _verify_gitea_sig(raw_body: bytes, headers: dict) -> bool:
     if not GITEA_WEBHOOK_SECRET:
@@ -225,7 +223,7 @@ def _verify_gitlab_sig(raw_body: bytes, headers: dict) -> bool:
     return headers.get("x-gitlab-token", "") == GITLAB_WEBHOOK_SECRET
 
 
-# ── Payload parsers ────────────────────────────────────────────────────────────
+# Payload parsers
 
 def _parse_gitea(payload: dict) -> tuple:
     repo_obj = payload.get("repository") or {}
@@ -277,7 +275,7 @@ def _parse_gitlab(payload: dict) -> tuple:
     return repo, mr_iid, normalised, sha
 
 
-# ── Shared handler core ───────────────────────────────────────────────────────
+# Shared handler core
 
 async def _handle_pr_event(
     provider: str,
@@ -322,7 +320,7 @@ async def _handle_pr_event(
         return JSONResponse(status_code=200, content={"status": "error", "detail": str(exc)})
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# Routes
 
 @app.get("/health")
 def health():

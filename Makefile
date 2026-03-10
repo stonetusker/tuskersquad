@@ -1,7 +1,7 @@
-# ════════════════════════════════════════════════════════
-#  TuskerSquad — Makefile
+# --------------------------------------------------------
+#  TuskerSquad - Makefile
 #  Run from the project root directory.
-# ════════════════════════════════════════════════════════
+# --------------------------------------------------------
 
 COMPOSE = docker compose -f infra/docker-compose.yml --env-file infra/.env
 
@@ -9,18 +9,19 @@ COMPOSE = docker compose -f infra/docker-compose.yml --env-file infra/.env
         health ps env \
         demo-security demo-pricing demo-latency demo-all demo-clean
 
-# ── Lifecycle ─────────────────────────────────────────────────────────
+# -- Lifecycle ---------------------------------------------------------
 up:
-	@[ -f infra/.env ] || (echo "⚠  infra/.env not found — copying from .env.example" && cp infra/.env.example infra/.env)
+	@[ -f infra/.env ] || (echo "infra/.env not found - copying from .env.example" && cp infra/.env.example infra/.env)
 	$(COMPOSE) up --build -d
 	@echo ""
-	@echo "  ✅  TuskerSquad is running"
-	@echo "  ────────────────────────────────────────────"
-	@echo "  🎨  UI          http://localhost:5173"
-	@echo "  🛒  Demo App    http://localhost:8080"
-	@echo "  📡  Gitea       http://localhost:3000"
-	@echo "  📖  API Docs    http://localhost:8000/docs"
-	@echo "  ────────────────────────────────────────────"
+	@echo "TuskerSquad is running:"
+	@echo "  UI       http://localhost:5173"
+	@echo "  Demo App http://localhost:8080"
+	@echo "  Gitea    http://localhost:3000"
+	@echo "  API Docs http://localhost:8000/docs"
+	@echo ""
+	@echo "Webhook is auto-registered by the gitea-setup container."
+	@echo "Add GITEA_TOKEN to infra/.env then run: make restart"
 
 down:
 	$(COMPOSE) down
@@ -45,9 +46,9 @@ logs-frontend:
 ps:
 	$(COMPOSE) ps
 
-# ── Health check ──────────────────────────────────────────────────────
+# -- Health check ------------------------------------------------------
 health:
-	@echo "── Checking service health ──────────────────────"
+	@echo "-- Checking service health ----------------------"
 	@curl -sf http://localhost:8000/api/health | python3 -m json.tool | head -3 \
 	  && echo "  langgraph-api  ✅" || echo "  langgraph-api  ❌"
 	@curl -sf http://localhost:8501/health    | python3 -m json.tool | head -3 \
@@ -58,11 +59,11 @@ health:
 	  && echo "  demo-backend   ✅" || echo "  demo-backend   ❌"
 
 env:
-	@echo "── Current infra/.env ───────────────────────────"
+	@echo "-- Current infra/.env ---------------------------"
 	@grep -v '^#' infra/.env 2>/dev/null | grep -v '^$$' \
 	  | sed 's/\(PASSWORD\|TOKEN\|SECRET\)=.*/\1=***/'
 
-# ── Demo bug shortcuts ────────────────────────────────────────────────
+# -- Demo bug shortcuts ------------------------------------------------
 demo-security:
 	$(COMPOSE) stop demo-backend
 	BUG_SECURITY=true $(COMPOSE) up -d demo-backend

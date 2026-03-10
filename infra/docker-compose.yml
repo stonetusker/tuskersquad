@@ -1,28 +1,28 @@
 version: "3.9"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TuskerSquad — Stonetusker Systems
+
+# TuskerSquad - Stonetusker Systems
 # Agentic AI PR Governance Platform  v3
 #
 # Services
-# ────────
-#  postgres            — persistent data store (port 5432)
-#  gitea               — self-hosted Git + Actions  (port 3000)
-#  demo-backend        — ShopFlow e-commerce test target  (port 8080)
-#  langgraph-api       — 8-agent orchestration core  (port 8000)
-#  integration-service — webhook receiver  (port 8001)
-#  dashboard           — BFF proxy for React UI  (port 8501)
-#  frontend            — React + Vite  (port 5173)
+#
+#  postgres            - persistent data store (port 5432)
+#  gitea               - self-hosted Git + Actions  (port 3000)
+#  demo-backend        - ShopFlow e-commerce test target  (port 8080)
+#  langgraph-api       - 8-agent orchestration core  (port 8000)
+#  integration-service - webhook receiver  (port 8001)
+#  dashboard           - BFF proxy for React UI  (port 8501)
+#  frontend            - React + Vite  (port 5173)
 #
 # Quick start (from project root):
 #   cp infra/.env.example infra/.env
 #   docker compose -f infra/docker-compose.yml up --build -d
 #   OR just: make up
-# ═══════════════════════════════════════════════════════════════════════════════
+
 
 services:
 
-  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  # PostgreSQL
   postgres:
     image: postgres:15-alpine
     container_name: tuskersquad-postgres
@@ -46,13 +46,27 @@ services:
       start_period: 10s
 
 
-  # ── Gitea (self-hosted Git + Actions) ───────────────────────────────────────
+  # Gitea self-hosted Git server
   gitea:
     image: gitea/gitea:1.21
     container_name: tuskersquad-gitea
     restart: unless-stopped
     environment:
       GITEA__actions__ENABLED: "true"
+      # Allow Gitea to deliver webhooks to other containers on the Docker network.
+      # Without this, Gitea blocks webhook delivery to internal/private IPs.
+      GITEA__webhook__ALLOWED_HOST_LIST: "*"
+      # Skip the interactive install wizard on first boot.
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__database__DB_TYPE: "sqlite3"
+      GITEA__database__PATH: "/data/gitea/gitea.db"
+      GITEA__server__ROOT_URL: "http://localhost:3000/"
+      GITEA__server__HTTP_PORT: "3000"
+      # Default admin user created on first boot.
+      # Change the password after first login.
+      GITEA__admin__DEFAULT_ADMIN_NAME: "${GITEA_ADMIN_USER:-tusker}"
+      GITEA__admin__DEFAULT_ADMIN_PASSWORD: "${GITEA_ADMIN_PASS:-tusker1234}"
+      GITEA__admin__DEFAULT_ADMIN_EMAIL: "${GITEA_ADMIN_EMAIL:-admin@tuskersquad.local}"
     ports:
       - "3000:3000"
       - "2222:22"
@@ -60,9 +74,40 @@ services:
       - gitea_data:/data
     networks:
       - tuskersquad-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/v1/settings/api 2>/dev/null | grep -q version || exit 1"]
+      interval: 10s
+      timeout: 6s
+      retries: 15
+      start_period: 30s
 
 
-  # ── ShopFlow Demo — legacy monolith (kept for compatibility) ────────────────
+  # One-shot container that runs after Gitea is healthy and registers the
+  # webhook automatically. You no longer need to click through the Gitea UI.
+  # Re-runs safely on every "make up" - the script checks before creating.
+  gitea-setup:
+    image: alpine/curl:latest
+    container_name: tuskersquad-gitea-setup
+    restart: "no"
+    environment:
+      GITEA_URL:          "http://tuskersquad-gitea:3000"
+      GITEA_ADMIN_USER:   "${GITEA_ADMIN_USER:-tusker}"
+      GITEA_ADMIN_PASS:   "${GITEA_ADMIN_PASS:-tusker1234}"
+      GITEA_TOKEN:        "${GITEA_TOKEN:-}"
+      GITEA_WEBHOOK_SECRET: "${GITEA_WEBHOOK_SECRET:-}"
+      INTEGRATION_URL:    "http://tuskersquad-integration:8001"
+      REPO_NAME:          "${GITEA_REPO:-shopflow}"
+    volumes:
+      - ../scripts/gitea_setup.sh:/gitea_setup.sh:ro
+    command: ["sh", "/gitea_setup.sh"]
+    depends_on:
+      gitea:
+        condition: service_healthy
+    networks:
+      - tuskersquad-net
+
+
+  # ShopFlow demo app - legacy monolith kept for compatibility
   demo-backend:
     build:
       context: ..
@@ -85,7 +130,7 @@ services:
       start_period: 30s
 
 
-  # ── ShopFlow v2 — Catalog Microservice (port 8081) ───────────────────────────
+  # ShopFlow v2 - Catalog Microservice (port 8081)
   catalog-service:
     build:
       context: ..
@@ -107,7 +152,7 @@ services:
       start_period: 20s
 
 
-  # ── ShopFlow v2 — Order Microservice (port 8082) ─────────────────────────────
+  # ShopFlow v2 - Order Microservice (port 8082)
   order-service:
     build:
       context: ..
@@ -137,7 +182,7 @@ services:
       start_period: 25s
 
 
-  # ── ShopFlow v2 — User Microservice (port 8083) ──────────────────────────────
+  # ShopFlow v2 - User Microservice (port 8083)
   user-service:
     build:
       context: ..
@@ -160,7 +205,7 @@ services:
       start_period: 20s
 
 
-  # ── LangGraph API (8-agent orchestration core) ──────────────────────────────
+  # LangGraph API (8-agent orchestration core)
   langgraph-api:
     build:
       context: ..
@@ -168,34 +213,34 @@ services:
     container_name: tuskersquad-langgraph
     restart: unless-stopped
     environment:
-      # ── LLM backend ──────────────────────────────────────────────────────────
+      # LLM backend
       # Mac/Windows: host.docker.internal resolves to the host machine automatically.
       # Linux:       set OLLAMA_URL in infra/.env to your host IP, e.g.:
       #              OLLAMA_URL=http://192.168.1.100:11434
       OLLAMA_URL:            "${OLLAMA_URL:-http://host.docker.internal:11434}"
-      # ── Database ─────────────────────────────────────────────────────────────
+      # Database
       POSTGRES_USER:         tusker
       POSTGRES_PASSWORD:     tusker
       POSTGRES_DB:           tuskersquad
       POSTGRES_HOST:         tuskersquad-postgres
       POSTGRES_PORT:         "5432"
-      # ── Internal service URLs ─────────────────────────────────────────────────
+      # Internal service URLs
       DEMO_APP_URL:          "http://tuskersquad-demo-backend:8080"
       DEMO_FRONTEND_URL:     "http://tuskersquad-frontend:5173"
-      # ── ShopFlow v2 microservice URLs (read by log_inspector agent) ───────────
+      # ShopFlow v2 microservice URLs (read by log_inspector agent)
       CATALOG_SERVICE_URL:   "http://tuskersquad-catalog:8081"
       ORDER_SERVICE_URL:     "http://tuskersquad-order:8082"
       USER_SERVICE_URL:      "http://tuskersquad-user:8083"
-      # ── Gitea ────────────────────────────────────────────────────────────────
+      # Gitea
       GITEA_URL:             "http://tuskersquad-gitea:3000"
       GITEA_TOKEN:           "${GITEA_TOKEN:-}"
-      # ── Auto-Merge & Deploy ───────────────────────────────────────────────────
+      # Auto-Merge & Deploy
       AUTO_MERGE_ON_APPROVE: "${AUTO_MERGE_ON_APPROVE:-false}"
       MERGE_STYLE:           "${MERGE_STYLE:-merge}"
       DEPLOY_ON_MERGE:       "${DEPLOY_ON_MERGE:-false}"
       DEPLOY_BRANCH:         "${DEPLOY_BRANCH:-main}"
       DEPLOY_PIPELINE:       "${DEPLOY_PIPELINE:-deploy}"
-      # ── Agent tool configuration (override in infra/.env) ─────────────────────
+      # Agent tool configuration (override in infra/.env)
       BACKEND_TEST_TOOL:     "${BACKEND_TEST_TOOL:-pytest}"
       BACKEND_TEST_DIR:      "${BACKEND_TEST_DIR:-tests/api}"
       FRONTEND_TEST_TOOL:    "${FRONTEND_TEST_TOOL:-playwright}"
@@ -204,7 +249,7 @@ services:
       SRE_LOAD_TOOL:         "${SRE_LOAD_TOOL:-httpx}"
       SRE_REQUEST_COUNT:     "${SRE_REQUEST_COUNT:-10}"
       LATENCY_THRESHOLD_MS:  "${LATENCY_THRESHOLD_MS:-500}"
-      # ── Logging ──────────────────────────────────────────────────────────────
+      # Logging
       LOG_DIR:               "/app/logs"
     ports:
       - "8000:8000"
@@ -229,13 +274,13 @@ services:
       timeout: 6s
       retries: 10
       start_period: 40s
-    # ── Linux Ollama fix ───────────────────────────────────────────────────────
+    # Linux Ollama fix
     # Uncomment the two lines below if you're on Linux and Ollama isn't reachable:
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
 
 
-  # ── Integration Service (webhook receiver) ──────────────────────────────────
+  # Integration Service (webhook receiver)
   integration-service:
     build:
       context: ..
@@ -244,18 +289,20 @@ services:
     restart: unless-stopped
     command: uvicorn services.integration_service.main:app --host 0.0.0.0 --port 8001
     environment:
-      LANGGRAPH_URL:     "http://tuskersquad-langgraph:8000"
+      LANGGRAPH_URL:          "http://tuskersquad-langgraph:8000"
       GITEA_URL:              "http://tuskersquad-gitea:3000"
       GITEA_TOKEN:            "${GITEA_TOKEN:-}"
       GITEA_WEBHOOK_SECRET:   "${GITEA_WEBHOOK_SECRET:-}"
-      JIRA_URL:          "${JIRA_URL:-}"
-      JIRA_TOKEN:        "${JIRA_TOKEN:-}"
-      JIRA_PROJECT:      "${JIRA_PROJECT:-TUSKER}"
-      SLACK_WEBHOOK_URL: "${SLACK_WEBHOOK_URL:-}"
+      JIRA_URL:               "${JIRA_URL:-}"
+      JIRA_TOKEN:             "${JIRA_TOKEN:-}"
+      JIRA_PROJECT:           "${JIRA_PROJECT:-TUSKER}"
+      SLACK_WEBHOOK_URL:      "${SLACK_WEBHOOK_URL:-}"
     ports:
       - "8001:8001"
     depends_on:
       langgraph-api:
+        condition: service_healthy
+      gitea:
         condition: service_healthy
     networks:
       - tuskersquad-net
@@ -267,7 +314,7 @@ services:
       start_period: 10s
 
 
-  # ── Dashboard BFF proxy ─────────────────────────────────────────────────────
+  # Dashboard BFF proxy
   dashboard:
     build:
       context: ..
@@ -294,7 +341,7 @@ services:
       start_period: 10s
 
 
-  # ── React + Vite frontend ───────────────────────────────────────────────────
+  # React + Vite frontend
   frontend:
     build:
       context: ../apps/frontend
@@ -302,7 +349,7 @@ services:
     container_name: tuskersquad-frontend
     restart: unless-stopped
     environment:
-      # Vite proxy targets (server-side only — browser uses relative paths)
+      # Vite proxy targets (server-side only - browser uses relative paths)
       VITE_DASH_URL:        "http://dashboard:8501"
       VITE_INTEGRATION_URL: "http://integration-service:8001"
     ports:

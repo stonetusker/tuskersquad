@@ -59,16 +59,16 @@ def get_graph():
     return _graph
 
 
-# ── Agent decision narrative generator ────────────────────────────────────────
+# Agent decision narrative generator
 
 _AGENT_TEST_DESCRIPTIONS = {
     "planner":       "Analysed PR scope, identified risk indicators and planned review strategy",
-    "backend":       "Tested API endpoints — checkout totals, latency, error rates, pricing logic",
+    "backend":       "Tested API endpoints - checkout totals, latency, error rates, pricing logic",
     "frontend":      "Tested UI flows, form validation, accessibility, cart behaviour",
     "security":      "Probed authentication, JWT validation, injection vectors, auth bypass",
     "sre":           "Load tested checkout endpoint, measured P95 latency and throughput",
-    "log_inspector": "Read structured logs from all microservices — identified server-side errors and cross-service failure chains",
-    "correlator":    "Correlated client-side findings with server-side log events — produced root cause chains and developer brief",
+    "log_inspector": "Read structured logs from all microservices - identified server-side errors and cross-service failure chains",
+    "correlator":    "Correlated client-side findings with server-side log events - produced root cause chains and developer brief",
     "challenger":    "Audited peer agent findings for false positives and environment variance",
     "qa_lead":       "Synthesised all findings into risk assessment and standup summary",
     "judge":         "Made final deployment decision based on all evidence",
@@ -123,7 +123,7 @@ def _derive_agent_decision_summary(agent: str, findings: list, challenges: list)
     else:
         decision   = "PASS"
         test_count = 3
-        summary    = f"{_AGENT_TEST_DESCRIPTIONS.get(agent, 'Tests completed.')} — All checks passed."
+        summary    = f"{_AGENT_TEST_DESCRIPTIONS.get(agent, 'Tests completed.')} - All checks passed."
 
     risk = (
         "HIGH"   if any(f.get("severity") == "HIGH"   for f in my_findings) else
@@ -141,7 +141,7 @@ def _persist_results(
 ):
     """Persist graph output to PostgreSQL. Returns (id_map, agent_decisions)."""
 
-    # Agent logs — save output text too
+    # Agent logs - save output text too
     for log in result.get("agent_logs", []):
         agent_name = log.get("agent")
         try:
@@ -273,16 +273,15 @@ def execute_workflow(workflow_id: str) -> None:
             })
 
         # Wire LLM client's DB callback so every LLM call is persisted.
-        # IMPORTANT: callback opens its OWN session — never share the execute_workflow
-        # session across threads (SQLAlchemy sessions are not thread-safe).
+        # IMPORTANT: callback opens its OWN session. Never share the execute_workflow
+        # session across threads because SQLAlchemy sessions are not thread-safe.
         try:
             from core.llm_client import get_llm_client
             _llm_instance = get_llm_client()
             _wf_id_for_log = workflow_id  # capture in local var, not as default arg
             def _db_log(**kwargs):
-                # Ignore any workflow_id passed via kwargs — always use the
-                # captured workflow id for THIS run. If generate() passes
-                # workflow_id=None it would otherwise override the closure default.
+                # Always use the captured workflow_id for this run.
+                # Drop any workflow_id from kwargs so it does not override the closure.
                 kwargs.pop("workflow_id", None)
                 try:
                     _cb_db = SessionLocal()
@@ -357,15 +356,16 @@ def execute_workflow(workflow_id: str) -> None:
             wf_repo.update_workflow_status(workflow_id, "COMPLETED")
             _update_registry(workflow_id, "COMPLETED", rationale, qa_summary, risk_level)
             logger.info("auto_decision workflow=%s decision=%s", workflow_id, decision)
-            _post_agent_pr_comments(workflow_id, agent_decisions)
-            _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_decisions)
+            # Agent comments are already posted live inside each graph node.
+            # Post only the final summary comment here.
+            _post_final_summary(workflow_id, result, qa_summary, risk_level)
             return
 
         wf_repo.update_workflow_status(workflow_id, "WAITING_HUMAN_APPROVAL")
         _update_registry(workflow_id, "WAITING_HUMAN_APPROVAL", rationale, qa_summary, risk_level,
                          extra={"agent_decisions": agent_decisions})
-        _post_agent_pr_comments(workflow_id, agent_decisions)
-        _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_decisions)
+        # Agent comments already posted live. Post the final summary comment now.
+        _post_final_summary(workflow_id, result, qa_summary, risk_level)
 
     except Exception:
         logger.exception("execute_workflow_failed workflow=%s", workflow_id)
@@ -432,10 +432,68 @@ _PIPELINE_ORDER = ["planner", "backend", "frontend", "security",
                    "sre", "challenger", "qa_lead", "judge"]
 
 
+def _post_final_summary(workflow_id, result, qa_summary, risk_level):
+    """Post the final consolidated review summary to the PR.
+
+    This runs after all agents have finished. Each individual agent comment
+    was already posted live inside the graph node as it completed.
+    This final comment gives the developer a single rolled-up view with
+    the overall decision, risk level, and developer brief.
+    """
+    db = SessionLocal()
+    try:
+        wf = WorkflowRepository(db).get_workflow(workflow_id)
+        if not (wf and wf.repository and wf.pr_number):
+            logger.warning("post_final_summary_skip: workflow %s has no repo/pr", workflow_id)
+            return
+
+        rows = FindingsRepository(db).list_by_workflow(workflow_id)
+        payload = [
+            {"agent": f.agent, "title": f.title, "severity": f.severity, "description": f.description}
+            for f in rows
+        ]
+
+        # agent_decisions built from what was persisted to DB
+        agents = ["planner", "backend", "frontend", "security", "sre", "challenger", "qa_lead", "judge"]
+        findings_list = result.get("findings", [])
+        challenges_list = result.get("challenges", [])
+        agent_decisions = {}
+        for agent in agents:
+            try:
+                ad = _derive_agent_decision_summary(agent, findings_list, challenges_list)
+                if agent == "qa_lead" and qa_summary:
+                    ad["summary"] = qa_summary[:500]
+                    ad["risk_level"] = risk_level
+                if agent == "judge":
+                    ad["decision"] = result.get("decision", "REVIEW_REQUIRED")
+                    ad["summary"] = result.get("rationale", "")[:500] or ad["summary"]
+                agent_decisions[agent] = ad
+            except Exception:
+                pass
+
+        developer_brief = result.get("developer_brief", "")
+        body = build_initial_review_comment(
+            workflow_id=str(workflow_id),
+            decision=result.get("decision", "UNKNOWN"),
+            findings=payload,
+            qa_summary=qa_summary,
+            risk_level=risk_level,
+            rationale=result.get("rationale", ""),
+            agent_decisions=agent_decisions,
+            developer_brief=developer_brief,
+        )
+        post_pr_comment_sync(wf.repository, wf.pr_number, body)
+        logger.info("final_summary_posted workflow=%s repo=%s pr=%s", workflow_id, wf.repository, wf.pr_number)
+    except Exception:
+        logger.exception("post_final_summary_failed workflow=%s", workflow_id)
+    finally:
+        db.close()
+
+
 def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
     """
     Post one PR comment per agent after the pipeline completes.
-    Opens its own DB session — safe to call from any thread.
+    Opens its own DB session. Safe to call from any thread.
     """
     db = SessionLocal()
     try:
@@ -460,7 +518,7 @@ def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
             my_f     = findings_by_agent.get(agent, [])
 
             lines = [
-                f"### {agent.replace('_', ' ').title()} — {di}  Risk: {ri if ri else risk}",
+                f"### {agent.replace('_', ' ').title()} [{di}]  Risk: {ri if ri else risk}",
                 "",
             ]
             if summary:
@@ -474,11 +532,11 @@ def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
                     sev  = finding.severity or "LOW"
                     si   = _SEV_ICON.get(sev, sev)
                     desc = (finding.description or "")[:140]
-                    lines.append(f"- **{si if si else sev}** {finding.title} — {desc}")
+                    lines.append(f"- **{si if si else sev}** {finding.title} - {desc}")
                 if len(my_f) > 6:
                     lines.append(f"- *(+ {len(my_f) - 6} more findings)*")
             else:
-                lines.append(f"**Tests run:** {tests} · **Findings:** 0 — All checks passed.")
+                lines.append(f"**Tests run:** {tests} | **Findings:** 0 - All checks passed.")
 
             lines += ["", "---", "*TuskerSquad*"]
             body = "\n".join(lines)
@@ -503,7 +561,7 @@ def _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_
         payload = [{"agent": f.agent, "title": f.title, "severity": f.severity,
                     "description": f.description} for f in rows]
 
-        # developer_brief comes from the correlator agent's cross-layer RCA
+        # developer_brief is produced by the correlator agent
         developer_brief = result.get("developer_brief", "")
 
         body = build_initial_review_comment(
