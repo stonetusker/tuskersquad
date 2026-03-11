@@ -75,6 +75,23 @@ def run_cleanup_agent(
             })
             fid += 1
 
+    # Remove Docker image built for this PR (if it exists)
+    pr_image = f"pr-{pr_number}-build"
+    try:
+        img_check = subprocess.run(
+            ["docker", "image", "inspect", pr_image],
+            capture_output=True, text=True, timeout=10
+        )
+        if img_check.returncode == 0:
+            subprocess.run(
+                ["docker", "rmi", "-f", pr_image],
+                capture_output=True, text=True, timeout=30
+            )
+            logger.info("Docker image %s removed", pr_image)
+    except Exception as e:
+        logger.warning("Image cleanup warning for %s: %s", pr_image, e)
+        # Image cleanup is best-effort - don't add a finding
+
     # Remove workspace directory with retries
     if workspace_dir and os.path.exists(workspace_dir):
         try:

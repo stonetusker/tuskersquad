@@ -46,6 +46,8 @@ try:
         # ── Test phase outputs ────────────────────────────────────────────────
         test_success: bool
         test_results: Dict[str, Any]
+        # ── Build / deploy workspace tracking ────────────────────────────────
+        workspace_dir: str
         # ── Runtime analysis outputs ──────────────────────────────────────────
         analysis_results: Dict[str, Any]
         # ── Root cause analysis output (set by correlator agent) ───────────────

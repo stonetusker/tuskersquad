@@ -134,10 +134,13 @@ def run_tester_agent(
                     test_success = False  # Override if pytest fails
 
             # API endpoint tests
+            # Configurable endpoint prefix - defaults to /api for ShopFlow
+            api_prefix = os.getenv("API_PREFIX", "")
             api_tests = [
-                {"endpoint": "/products", "method": "GET", "expected_status": 200},
-                {"endpoint": "/auth/login", "method": "POST", "expected_status": 422},  # Validation error expected
-                {"endpoint": "/checkout", "method": "POST", "expected_status": 401},  # Auth required
+                {"endpoint": f"{api_prefix}/products", "method": "GET", "expected_status": 200},
+                {"endpoint": f"{api_prefix}/auth/login", "method": "POST", "expected_status": 422},  # Validation error expected
+                {"endpoint": f"{api_prefix}/checkout", "method": "POST", "expected_status": 401},  # Auth required
+                {"endpoint": "/health", "method": "GET", "expected_status": 200},  # Health check
             ]
 
             api_passed = 0
@@ -187,7 +190,7 @@ def run_tester_agent(
             test_results["api_tests"] = {"passed": api_passed, "total": api_total}
 
             # Performance test - basic load test
-            perf_cmd = ["curl", "-s", "--max-time", "30", f"{deploy_url}/products"]
+            perf_cmd = ["curl", "-s", "--max-time", "30", f"{deploy_url}{api_prefix}/products"]
             perf_times = []
 
             for i in range(5):

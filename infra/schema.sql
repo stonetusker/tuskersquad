@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     merge_sha     TEXT,
     deploy_status TEXT,   -- pending | triggered | failed | skipped
     deploy_url    TEXT,
+    container_name TEXT,
+    workspace_dir  TEXT,
     analysis_results JSONB,
     created_at    TIMESTAMPTZ DEFAULT NOW(),
     updated_at    TIMESTAMPTZ DEFAULT NOW()

@@ -5,8 +5,10 @@ FROM python:3.11-slim
 #   gcc, libffi-dev  → needed to compile bcrypt / cryptography C extensions
 #   libpq-dev        → psycopg2-binary may need headers on some platforms
 #   curl             → useful for manual container healthchecks
+#   git              → required by builder_agent and repo_validator_agent to clone PRs
+#   docker.io        → Docker CLI required by builder_agent, deployer_agent, cleanup_agent
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libffi-dev libpq-dev curl \
+ && apt-get install -y --no-install-recommends gcc libffi-dev libpq-dev curl git docker.io \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

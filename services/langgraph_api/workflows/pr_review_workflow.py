@@ -62,20 +62,24 @@ def get_graph():
 # Agent decision narrative generator
 
 _AGENT_TEST_DESCRIPTIONS = {
-    "planner":       "Analysed PR scope, identified risk indicators and planned review strategy",
-    "backend":       "Tested API endpoints - checkout totals, latency, error rates, pricing logic",
-    "frontend":      "Tested UI flows, form validation, accessibility, cart behaviour",
-    "security":      "Probed authentication, JWT validation, injection vectors, auth bypass",
-    "sre":           "Load tested checkout endpoint, measured P95 latency and throughput",
-    "builder":       "Built application from PR source code in isolated environment",
-    "deployer":      "Deployed built application to ephemeral environment for testing",
-    "tester":        "Executed automated tests against deployed application",
-    "runtime_analyzer": "Analyzed runtime behavior, logs, and test results for issues",
-    "log_inspector": "Read structured logs from all microservices - identified server-side errors and cross-service failure chains",
-    "correlator":    "Correlated client-side findings with server-side log events - produced root cause chains and developer brief",
-    "challenger":    "Audited peer agent findings for false positives and environment variance",
-    "qa_lead":       "Synthesised all findings into risk assessment and standup summary",
-    "judge":         "Made final deployment decision based on all evidence",
+    "repo_validator":    "Verified repository and PR exist and are accessible; checked out PR commit",
+    "planner":           "Analysed PR scope, identified risk indicators and planned review strategy",
+    "backend":           "Tested API endpoints - checkout totals, latency, error rates, pricing logic",
+    "frontend":          "Tested UI flows, form validation, accessibility, cart behaviour",
+    "security":          "Probed authentication, JWT validation, injection vectors, auth bypass",
+    "sre":               "Load tested checkout endpoint, measured P95 latency and throughput",
+    "builder":           "Built application from PR source code in isolated environment",
+    "deployer":          "Deployed built application to ephemeral container environment",
+    "tester":            "Executed automated tests and API checks against deployed application",
+    "api_validator":     "Validated REST API endpoints for correct status codes and response format",
+    "security_runtime":  "Scanned container image for vulnerabilities using Trivy",
+    "runtime_analyzer":  "Analyzed runtime behavior, container logs, CPU/memory usage and test results",
+    "log_inspector":     "Read structured logs from all microservices - identified server-side errors and cross-service failure chains",
+    "correlator":        "Correlated client-side findings with server-side log events - produced root cause chains and developer brief",
+    "challenger":        "Audited peer agent findings for false positives and environment variance",
+    "qa_lead":           "Synthesised all findings into risk assessment and standup summary",
+    "judge":             "Made final deployment decision based on all evidence",
+    "cleanup":           "Removed ephemeral containers, Docker images, and workspace directories",
 }
 
 
@@ -127,7 +131,16 @@ def _derive_agent_decision_summary(agent: str, findings: list, challenges: list)
     else:
         decision   = "PASS"
         test_count = 3
-        summary    = f"{_AGENT_TEST_DESCRIPTIONS.get(agent, 'Tests completed.')} - All checks passed."
+        # Don't say "All checks passed" when agent ran against demo app, not PR code
+        cov_warnings = [f for f in my_findings if f.get("test_name") == "pr_coverage_warning"]
+        if cov_warnings:
+            decision   = "FLAG"
+            test_count = len(cov_warnings)
+            summary    = cov_warnings[0].get("description", "")[:400]
+        elif not my_findings:
+            summary = f"{_AGENT_TEST_DESCRIPTIONS.get(agent, 'Tests completed.')} - All checks passed."
+        else:
+            summary = f"{_AGENT_TEST_DESCRIPTIONS.get(agent, 'Tests completed.')} - All checks passed."
 
     risk = (
         "HIGH"   if any(f.get("severity") == "HIGH"   for f in my_findings) else
@@ -213,7 +226,9 @@ def _persist_results(
     # Per-agent decision summaries
     findings   = result.get("findings",   [])
     challenges = result.get("challenges", [])
-    agents     = ["planner", "backend", "frontend", "security", "sre", "challenger", "qa_lead", "judge"]
+    agents     = ["repo_validator", "planner", "backend", "frontend", "security", "sre",
+                   "builder", "deployer", "tester", "api_validator", "security_runtime",
+                   "runtime_analyzer", "log_inspector", "correlator", "challenger", "qa_lead", "judge", "cleanup"]
     agent_decisions: Dict[str, dict] = {}
 
     for agent in agents:
@@ -330,6 +345,36 @@ def execute_workflow(workflow_id: str) -> None:
         })
         logger.info("graph_invoke_done workflow=%s provider=%s duration=%.2fs",
                     workflow_id, git_provider, time.time() - t0)
+
+        # ── Early-exit: repository/PR validation failed ───────────────────────
+        # When the repo_validator rejects, LangGraph routes directly to END
+        # (skipping all other agents). The decision field is blank in this case,
+        # so we detect it by reading validator_failed from the final state.
+        if result.get("validator_failed"):
+            findings    = result.get("findings", [])
+            reject_desc = "; ".join(
+                f.get("description", f.get("title", ""))
+                for f in findings if f.get("agent") == "repo_validator"
+            ) or "Repository or PR could not be accessed."
+            rationale  = f"Workflow aborted: {reject_desc}"
+            risk_level = "HIGH"
+            wf_repo.update_workflow_status(workflow_id, "FAILED")
+            try:
+                gov_repo.create_decision(workflow_id, "REJECT")
+                db.commit()
+            except Exception:
+                logger.exception("governance_write_failed workflow=%s", workflow_id)
+            _update_registry(workflow_id, "FAILED", rationale, "", risk_level,
+                             extra={
+                                 "decision": "REJECT",
+                                 "rationale": rationale,
+                                 "risk_level": risk_level,
+                             })
+            # Post a clear REJECT comment on the PR
+            _post_validation_failure_comment(workflow_id, findings, rationale)
+            logger.error("workflow_aborted_validator_failed workflow=%s reason=%s",
+                         workflow_id, reject_desc)
+            return
 
         id_map, agent_decisions = _persist_results(
             db, workflow_id, result,
@@ -457,6 +502,60 @@ _PIPELINE_ORDER = ["planner", "backend", "frontend", "security",
                    "sre", "challenger", "qa_lead", "judge"]
 
 
+def _post_validation_failure_comment(workflow_id: str, findings: list, rationale: str) -> None:
+    """Post a clear REJECT comment to the PR when repository/PR validation fails.
+    This is critical because validator_failed means all subsequent agents are skipped,
+    so no other comment would be posted.
+    """
+    db = SessionLocal()
+    try:
+        wf = WorkflowRepository(db).get_workflow(workflow_id)
+        if not (wf and wf.repository and wf.pr_number):
+            logger.warning("validation_failure_comment_skip: no repo/pr for %s", workflow_id)
+            return
+
+        lines = [
+            "## ❌ TuskerSquad — Workflow Aborted: Validation Failed",
+            "",
+            "> **Repository or PR could not be accessed.** All subsequent agents have been skipped.",
+            "",
+            "### Validation Findings",
+            "",
+        ]
+        for f in findings:
+            sev  = f.get("severity", "HIGH")
+            si   = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(sev, "🔴")
+            title = f.get("title", "Validation error")
+            desc  = f.get("description", "")[:300]
+            lines.append(f"- {si} **{title}**")
+            if desc:
+                lines.append(f"  {desc}")
+
+        lines += [
+            "",
+            "### What to check",
+            "",
+            "1. The repository name in the webhook payload matches an existing Gitea repo.",
+            "2. The `GITEA_TOKEN` in `infra/.env` has `repository` and `issue` read/write scopes.",
+            "3. The PR number exists and the PR branch can be cloned.",
+            "4. The Gitea container is healthy: `docker ps | grep gitea`",
+            "",
+            f"> Rationale: {rationale[:400]}",
+            "",
+            "---",
+            "*TuskerSquad — Workflow ID: " + str(workflow_id) + "*",
+        ]
+
+        body = "\n".join(lines)
+        post_pr_comment_sync(wf.repository, wf.pr_number, body)
+        logger.info("validation_failure_comment_posted workflow=%s repo=%s pr=%s",
+                    workflow_id, wf.repository, wf.pr_number)
+    except Exception:
+        logger.exception("post_validation_failure_comment_failed workflow=%s", workflow_id)
+    finally:
+        db.close()
+
+
 def _post_final_summary(workflow_id, result, qa_summary, risk_level):
     """Post the final consolidated review summary to the PR.
 
@@ -479,7 +578,9 @@ def _post_final_summary(workflow_id, result, qa_summary, risk_level):
         ]
 
         # agent_decisions built from what was persisted to DB
-        agents = ["planner", "backend", "frontend", "security", "sre", "challenger", "qa_lead", "judge"]
+        agents = ["repo_validator", "planner", "backend", "frontend", "security", "sre",
+                  "builder", "deployer", "tester", "api_validator", "security_runtime",
+                  "runtime_analyzer", "log_inspector", "correlator", "challenger", "qa_lead", "judge", "cleanup"]
         findings_list = result.get("findings", [])
         challenges_list = result.get("challenges", [])
         agent_decisions = {}

@@ -115,6 +115,31 @@ if [ "$AUTH_CODE" != "200" ]; then
 fi
 
 ########################################
+# Auto-create GITEA_TOKEN if not provided
+########################################
+
+if [ -z "${GITEA_TOKEN}" ]; then
+    log "GITEA_TOKEN not set - attempting to create API token automatically..."
+
+    # Delete existing tuskersquad-auto token if it exists (idempotent)
+    curl -s -o /dev/null -X DELETE         -H "${AUTH_HEADER}"         "${API}/users/${ADMIN_USER}/tokens/tuskersquad-auto" || true
+
+    # Create a new token
+    TOKEN_RESPONSE=$(curl -s         -X POST         -H "${AUTH_HEADER}"         -H "Content-Type: application/json"         -d "{\"name\": \"tuskersquad-auto\", \"scopes\": [\"write:repository\", \"write:issue\", \"read:user\"]}"         "${API}/users/${ADMIN_USER}/tokens" || echo "{}")
+
+    AUTO_TOKEN=$(echo "${TOKEN_RESPONSE}" | grep -o '"sha1":"[^"]*"' | sed 's/"sha1":"//;s/"//')
+
+    if [ -n "${AUTO_TOKEN}" ]; then
+        log "Auto-token created: ${AUTO_TOKEN:0:8}..."
+        log "IMPORTANT: Add this to infra/.env: GITEA_TOKEN=${AUTO_TOKEN}"
+        GITEA_TOKEN="${AUTO_TOKEN}"
+        AUTH_HEADER="Authorization: token ${GITEA_TOKEN}"
+    else
+        log "WARNING: Could not auto-create token. Set GITEA_TOKEN manually in infra/.env"
+    fi
+fi
+
+########################################
 # Repository setup
 ########################################
 

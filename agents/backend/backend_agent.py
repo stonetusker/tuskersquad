@@ -91,12 +91,42 @@ def _synthetic_findings(workflow_id: str, fid: int) -> List[Dict[str, Any]]:
     ]
 
 
-def run_backend_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 1) -> Dict[str, Any]:
+def run_backend_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 1,
+                      deploy_url: str = "", build_success: bool = False) -> Dict[str, Any]:
+    """
+    Backend agent runs pytest against the application.
+
+    When a PR-specific ephemeral deployment is available (deploy_url set by deployer agent),
+    tests run against that. Otherwise falls back to the permanent DEMO_APP_URL.
+    Always emits a MEDIUM finding when testing the demo app instead of PR code, so the
+    distinction is visible in the governance report.
+    """
     start = datetime.utcnow()
     findings: List[Dict[str, Any]] = []
     logger.info("backend_agent_started workflow=%s", workflow_id)
 
-    pr = _run_pytest(TEST_DIR, DEMO_APP_URL)
+    # Prefer ephemeral PR deployment over permanent demo app
+    target_url = deploy_url if deploy_url else DEMO_APP_URL
+    testing_pr_code = bool(deploy_url)
+
+    if not testing_pr_code:
+        findings.append({
+            "id": fid, "workflow_id": workflow_id, "agent": "backend",
+            "severity": "MEDIUM",
+            "title": "backend - tested against permanent demo app, not PR code",
+            "description": (
+                "No ephemeral deployment was available for this PR "
+                f"(build_success={build_success}, deploy_url=empty). "
+                f"Backend tests ran against the permanent demo backend at {DEMO_APP_URL}. "
+                "Test results reflect the baseline app, not the PR changes. "
+                "Ensure builder and deployer agents succeed for PR-specific validation."
+            ),
+            "test_name": "pr_coverage_warning",
+            "created_at": datetime.utcnow().isoformat(),
+        })
+        fid += 1
+
+    pr = _run_pytest(TEST_DIR, target_url)
 
     if pr["ran"]:
         now = datetime.utcnow().isoformat()

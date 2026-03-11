@@ -5,6 +5,7 @@ Sends simple HTTP requests to important endpoints and verifies responses.
 """
 
 import logging
+import os
 import subprocess
 from datetime import datetime
 from typing import Any, Dict, List
@@ -34,21 +35,28 @@ def run_api_validator_agent(
         })
         fid += 1
     else:
-        endpoints = ["/health", "/products", "/user/profile"]
-        for ep in endpoints:
+        # Test public endpoints only - auth-gated routes would always return 401/403
+        # and generate false positive MEDIUM findings.
+        api_prefix = os.getenv("API_PREFIX", "")
+        endpoint_tests = [
+            ("/health",                   "200"),   # health check - always public
+            (f"{api_prefix}/products",    "200"),   # product listing - public
+            (f"{api_prefix}/categories",  "200"),   # category listing - public
+        ]
+        for ep, expected_code in endpoint_tests:
             tests_run += 1
             try:
                 cmd = ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10",
                        f"{deploy_url}{ep}"]
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
                 code = res.stdout.strip() if res.returncode == 0 else "000"
-                if code != "200":
+                if code != expected_code:
                     findings.append({
                         "id": fid,
                         "agent": "api_validator",
                         "severity": "MEDIUM",
-                        "title": f"API {ep} returned {code}",
-                        "description": res.stderr or "unexpected status",
+                        "title": f"API {ep} returned {code} (expected {expected_code})",
+                        "description": res.stderr or f"Unexpected HTTP status {code}",
                         "test_name": "api_status",
                     })
                 fid += 1

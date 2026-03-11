@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 logger = logging.getLogger("agents.deployer")
 
 
-def _find_free_port(start_port: int = 8080, max_attempts: int = 100) -> int:
+def _find_free_port(start_port: int = 19000, max_attempts: int = 1000) -> int:
     """Find an available port starting from start_port."""
     for port in range(start_port, start_port + max_attempts):
         try:
@@ -94,7 +94,9 @@ def run_deployer_agent(
         else:
             # Find a free port for this deployment
             try:
-                host_port = _find_free_port(8080)
+                # Use high ephemeral port range to avoid collisions with running services
+                port_min = int(os.getenv("EPHEMERAL_PORT_RANGE_MIN", "19000"))
+                host_port = _find_free_port(port_min)
             except RuntimeError as e:
                 findings.append({
                     "id": fid,
@@ -119,10 +121,11 @@ def run_deployer_agent(
                 }
 
             # Run ephemeral container
+            docker_network = os.getenv("DOCKER_NETWORK", "tuskersquad-net")
             run_cmd = docker_args + [
                 "run", "-d",
                 "--name", container_name,
-                "--network", "tuskersquad-net",
+                "--network", docker_network,
                 "-p", f"{host_port}:8080",
                 docker_image
             ]

@@ -11,6 +11,39 @@ On **Approve**, TuskerSquad can **automatically merge the PR** and **trigger you
 
 ---
 
+---
+
+## v9 — Critical Fixes (Current)
+
+### Bug fixes in this release
+
+**1. Workflow now stops immediately when repository is inaccessible**
+
+Previously, `Repository tusker/shopflow not found or not accessible` was logged but the
+pipeline continued running all 18 agents. Now:
+- `repo_validator` failure → all subsequent agents are **skipped**
+- A clear `❌ Workflow Aborted` comment is posted on the PR with the exact failure reason
+- The workflow is marked `FAILED` in the database
+
+**2. False PASS results eliminated**
+
+Previously, agents reported `[PASS] All checks passed` even when there was no PR source
+available to test. This happened because agents fell back to the permanent demo-backend.
+Now:
+- Each agent emits a `MEDIUM` finding when it tests the demo app instead of PR code
+- The decision shows `FLAG` (not `PASS`) in this case
+- When a PR deployment (`deploy_url`) is available, agents test the actual PR code
+
+**3. Detailed error messages from repo_validator**
+
+Git clone errors, checkout failures, missing PRs, and token scope issues now include
+the actual error text so you can immediately see what to fix.
+
+See [docs/CHANGELOG.md](docs/CHANGELOG.md) for the full list.
+
+---
+
+
 ## ✨ What's New — Build, Deploy, Test & Runtime Analysis
 
 | Feature | How |

@@ -169,10 +169,15 @@ def run_runtime_analyzer_agent(
 
                 if stats_result.returncode == 0:
                     try:
-                        stats = json.loads(stats_result.stdout.strip())
+                        raw = stats_result.stdout.strip()
+                        # Remove BOM or null bytes that some Docker versions emit
+                        raw = raw.replace("\x00", "").strip()
+                        if not raw:
+                            raise ValueError("empty stats output")
+                        stats = json.loads(raw)
                         # parse percentage strings into floats
-                        cpu_str = stats.get("CPUPerc", "0%").strip().strip("%")
-                        mem_str = stats.get("MemPerc", "0%").strip().strip("%")
+                        cpu_str = str(stats.get("CPUPerc", "0%")).strip().strip("%")
+                        mem_str = str(stats.get("MemPerc", "0%")).strip().strip("%")
                         try:
                             cpu_val = float(cpu_str)
                         except ValueError:

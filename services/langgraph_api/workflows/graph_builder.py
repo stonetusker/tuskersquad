@@ -406,6 +406,11 @@ def _run_eng_agent(
             )
             if "diff_context" in sig.parameters:
                 kwargs["diff_context"] = diff_context
+            # Pass ephemeral deployment info if the agent accepts it
+            if "deploy_url" in sig.parameters:
+                kwargs["deploy_url"] = state.get("deploy_url", "")
+            if "build_success" in sig.parameters:
+                kwargs["build_success"] = state.get("build_success", False)
 
             result = runner(**kwargs)
             agent_findings = result.get("findings", [])
@@ -1304,7 +1309,10 @@ def human_approval_node(state: Dict[str, Any]) -> Dict[str, Any]:
 # Edge routing functions
 
 def route_after_validator(state: Dict[str, Any]) -> str:
-    """Route after repo validation node. Failures go to END to abort the workflow."""
+    """Route after repo validation node.
+    Validation failures route to END — execute_workflow detects validator_failed in the
+    final state and posts a REJECT comment + marks the workflow as FAILED.
+    """
     if state.get("validator_failed"):
         return "end"
     return "planner"
@@ -1535,18 +1543,63 @@ class SimpleGraph:
             "rationale":         "",
             "human_decision":    None,
             "human_reason":      None,
+            "validator_failed":  False,
+            "build_success":     False,
+            "build_artifacts":   {},
+            "deploy_success":    False,
+            "deploy_url":        "",
+            "container_name":    "",
+            "workspace_dir":     "",
+            "test_success":      False,
+            "test_results":      {},
+            "analysis_results":  {},
             "_fid":              1,
         }
 
-        # Run each node in order, merging returned partial state.
-        # log_inspector runs after client-side agents.
-        # correlator runs after log_inspector to join all evidence.
+        def _merge(current: dict, partial: dict) -> None:
+            """Merge partial state update into current state (in-place)."""
+            for k, v in partial.items():
+                if isinstance(v, list) and isinstance(current.get(k), list):
+                    current[k] = current[k] + v
+                else:
+                    current[k] = v
+
+        # ── Step 1: Repository validation (MUST run first) ────────────────────
+        # If validation fails, abort immediately — no other agents should run.
+        partial = repo_validator_node(current)
+        _merge(current, partial)
+        if current.get("validator_failed"):
+            logger.warning(
+                "SimpleGraph: validator_failed=True for workflow=%s — aborting pipeline",
+                workflow_id,
+            )
+            return current  # execute_workflow will detect validator_failed and reject
+
+        # ── Step 2: Static analysis agents ────────────────────────────────────
         for node_fn in [
             planner_node,
             backend_node,
             frontend_node,
             security_node,
             sre_node,
+        ]:
+            partial = node_fn(current)
+            _merge(current, partial)
+
+        # ── Step 3: Build/deploy/test pipeline ────────────────────────────────
+        for node_fn in [
+            builder_node,
+            deployer_node,
+            tester_node,
+            api_validator_node,
+            security_runtime_node,
+            runtime_analyzer_node,
+        ]:
+            partial = node_fn(current)
+            _merge(current, partial)
+
+        # ── Step 4: Analysis and governance ───────────────────────────────────
+        for node_fn in [
             log_inspector_node,
             correlator_node,
             challenger_node,
@@ -1554,11 +1607,10 @@ class SimpleGraph:
             judge_node,
         ]:
             partial = node_fn(current)
-            # Merge: append lists, overwrite scalars
-            for k, v in partial.items():
-                if isinstance(v, list) and isinstance(current.get(k), list):
-                    current[k] = current[k] + v
-                else:
-                    current[k] = v
+            _merge(current, partial)
+
+        # ── Step 5: Cleanup ───────────────────────────────────────────────────
+        partial = cleanup_node(current)
+        _merge(current, partial)
 
         return current

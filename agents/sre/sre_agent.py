@@ -130,9 +130,12 @@ def _synthetic_findings(workflow_id: str, fid: int) -> List[Dict[str, Any]]:
     ]
 
 
-def run_sre_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 1) -> Dict[str, Any]:
+def run_sre_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 1,
+                  deploy_url: str = "", build_success: bool = False) -> Dict[str, Any]:
     """
     Main entry point called by the graph runner.
+    Load tests run against the ephemeral PR deployment when available,
+    falling back to the permanent demo backend.
 
     Returns:
         dict with keys: findings, fid, agent_log.
@@ -142,10 +145,30 @@ def run_sre_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 
 
     logger.info("sre_agent_started", extra={"workflow_id": workflow_id})
 
-    if _reachable(DEMO_APP_URL):
-        logger.info("demo_app_reachable_running_latency_probes", extra={"workflow_id": workflow_id})
+    # Prefer ephemeral PR deployment for accurate latency measurements
+    target_url = deploy_url if deploy_url else DEMO_APP_URL
+    testing_pr_code = bool(deploy_url)
 
-        token = _get_auth_token(DEMO_APP_URL)
+    if not testing_pr_code:
+        findings.append({
+            "id": fid, "workflow_id": workflow_id, "agent": "sre",
+            "severity": "MEDIUM",
+            "title": "sre - load tested permanent demo app, not PR code",
+            "description": (
+                "No ephemeral deployment was available for this PR "
+                f"(build_success={build_success}, deploy_url=empty). "
+                f"SRE latency probes ran against {DEMO_APP_URL} (permanent demo backend). "
+                "Latency and error rate measurements reflect baseline, not PR changes."
+            ),
+            "test_name": "pr_coverage_warning",
+            "created_at": datetime.utcnow().isoformat(),
+        })
+        fid += 1
+
+    if _reachable(target_url):
+        logger.info("target_app_reachable_running_latency_probes", extra={"workflow_id": workflow_id, "url": target_url})
+
+        token = _get_auth_token(target_url)
         now = datetime.utcnow().isoformat()
 
         # Probe endpoints
@@ -157,7 +180,7 @@ def run_sre_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 
             probes.append(("POST", "/checkout", token, {"items": [{"product_id": 1, "quantity": 1}]}))
 
         for method, path, tok, body in probes:
-            stats = _measure_endpoint(DEMO_APP_URL, method, path, token=tok, json_body=body)
+            stats = _measure_endpoint(target_url, method, path, token=tok, json_body=body)
             if stats is None:
                 continue
 
@@ -203,8 +226,8 @@ def run_sre_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 
             fid += 1
     else:
         logger.warning(
-            "demo_app_unreachable_using_synthetic_findings",
-            extra={"workflow_id": workflow_id, "url": DEMO_APP_URL},
+            "target_app_unreachable_using_synthetic_findings",
+            extra={"workflow_id": workflow_id, "url": target_url},
         )
         synth = _synthetic_findings(workflow_id, fid)
         findings.extend(synth)

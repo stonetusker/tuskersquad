@@ -37,9 +37,24 @@ def run_repo_validator_agent(
     repo_ok = False
     pr_ok = False
     branch_ok = False
+    provider_error = None
 
-    try:
-        if provider:
+    if not provider:
+        findings.append({
+            "id": fid,
+            "agent": "repo_validator",
+            "severity": "HIGH",
+            "title": "Git provider not configured",
+            "description": (
+                "Could not initialise a Git provider client. "
+                "Check GIT_PROVIDER, GITEA_URL, and GITEA_TOKEN environment variables. "
+                "The GITEA_TOKEN must have repository and issue read/write scopes."
+            ),
+            "test_name": "git_provider_config",
+        })
+        fid += 1
+    else:
+        try:
             pr_info = provider.get_pr_info(repository, pr_number)
             if pr_info:
                 repo_ok = True
@@ -47,50 +62,84 @@ def run_repo_validator_agent(
                 # try to clone and checkout the head SHA in temp location
                 import tempfile
                 with tempfile.TemporaryDirectory() as d:
-                    repo_url = f"http://tuskersquad-gitea:3000/{repository}.git"
+                    gitea_url = os.getenv("GITEA_URL", "http://tuskersquad-gitea:3000").rstrip("/")
+                    repo_url = f"{gitea_url}/{repository}.git"
                     clone_cmd = ["git", "clone", "--depth", "1", repo_url, d]
                     r = subprocess.run(clone_cmd, capture_output=True, text=True, timeout=120)
-                    if r.returncode == 0 and pr_info.head_sha:
-                        co = subprocess.run(["git", "fetch", "origin", pr_info.head_sha], cwd=d,
-                                            capture_output=True, text=True, timeout=60)
-                        if co.returncode == 0:
-                            co2 = subprocess.run(["git", "checkout", pr_info.head_sha], cwd=d,
-                                                 capture_output=True, text=True, timeout=60)
-                            if co2.returncode == 0:
-                                branch_ok = True
-    except Exception as exc:
-        logger.warning("repo_validator_exception %s", exc)
+                    if r.returncode != 0:
+                        findings.append({
+                            "id": fid,
+                            "agent": "repo_validator",
+                            "severity": "HIGH",
+                            "title": "Repository clone failed",
+                            "description": (
+                                f"Could not clone {repo_url}. "
+                                f"Git error: {r.stderr[:300] or r.stdout[:300]}"
+                            ),
+                            "test_name": "repo_clone",
+                        })
+                        fid += 1
+                    elif pr_info.head_sha:
+                        co = subprocess.run(
+                            ["git", "fetch", "origin", pr_info.head_sha],
+                            cwd=d, capture_output=True, text=True, timeout=60
+                        )
+                        co2 = subprocess.run(
+                            ["git", "checkout", pr_info.head_sha],
+                            cwd=d, capture_output=True, text=True, timeout=60
+                        )
+                        if co.returncode == 0 and co2.returncode == 0:
+                            branch_ok = True
+                        else:
+                            findings.append({
+                                "id": fid,
+                                "agent": "repo_validator",
+                                "severity": "HIGH",
+                                "title": "Cannot checkout PR commit",
+                                "description": (
+                                    f"Could not checkout SHA {pr_info.head_sha}. "
+                                    f"Fetch: {co.stderr[:150]}. Checkout: {co2.stderr[:150]}"
+                                ),
+                                "test_name": "pr_checkout",
+                            })
+                            fid += 1
+                    else:
+                        # No head_sha - still reachable, treat as partially valid
+                        branch_ok = True
+            else:
+                findings.append({
+                    "id": fid,
+                    "agent": "repo_validator",
+                    "severity": "HIGH",
+                    "title": "Pull request not found",
+                    "description": (
+                        f"PR #{pr_number} not found in repository {repository}. "
+                        "The PR may have been closed, merged, or the repository name is incorrect."
+                    ),
+                    "test_name": "pr_exists",
+                })
+                fid += 1
+        except Exception as exc:
+            provider_error = str(exc)
+            logger.warning("repo_validator_provider_exception %s", exc)
+            findings.append({
+                "id": fid,
+                "agent": "repo_validator",
+                "severity": "HIGH",
+                "title": f"Repository not accessible: {repository}",
+                "description": (
+                    f"Failed to retrieve PR #{pr_number} from repository {repository}. "
+                    f"Error: {str(exc)[:400]}. "
+                    "Verify GITEA_URL is correct and Gitea is healthy, "
+                    "and that GITEA_TOKEN has the required scopes."
+                ),
+                "test_name": "repo_access",
+            })
+            fid += 1
 
-    if not repo_ok:
-        findings.append({
-            "id": fid,
-            "agent": "repo_validator",
-            "severity": "HIGH",
-            "title": "Repository inaccessible",
-            "description": f"Repository {repository} not found or not accessible",
-            "test_name": "repo_access",
-        })
-        fid += 1
-    if not pr_ok:
-        findings.append({
-            "id": fid,
-            "agent": "repo_validator",
-            "severity": "HIGH",
-            "title": "Pull request missing",
-            "description": f"PR #{pr_number} does not exist in {repository}",
-            "test_name": "pr_exists",
-        })
-        fid += 1
-    if repo_ok and pr_ok and not branch_ok:
-        findings.append({
-            "id": fid,
-            "agent": "repo_validator",
-            "severity": "HIGH",
-            "title": "Cannot checkout PR branch",
-            "description": "Failed to clone or checkout PR commit",
-            "test_name": "pr_checkout",
-        })
-        fid += 1
+    # Determine if validator failed: any HIGH finding means we cannot proceed
+    high_findings = [f for f in findings if f.get("severity") == "HIGH"]
+    failed = len(high_findings) > 0
 
     log = {
         "agent": "repo_validator",
@@ -100,6 +149,14 @@ def run_repo_validator_agent(
         "repo_ok": repo_ok,
         "pr_ok": pr_ok,
         "branch_ok": branch_ok,
+        "validator_failed": failed,
+        "provider_available": provider is not None,
     }
 
-    return {"findings": findings, "agent_log": log, "fid": fid, "validator_failed": not (repo_ok and pr_ok and branch_ok)}
+    if not failed:
+        logger.info("repo_validator_passed workflow=%s repo=%s pr=%d", workflow_id, repository, pr_number)
+    else:
+        logger.error("repo_validator_failed workflow=%s repo=%s pr=%d findings=%d",
+                     workflow_id, repository, pr_number, len(high_findings))
+
+    return {"findings": findings, "agent_log": log, "fid": fid, "validator_failed": failed}

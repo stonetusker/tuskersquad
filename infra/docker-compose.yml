@@ -254,12 +254,23 @@ services:
       SRE_LOAD_TOOL:         "${SRE_LOAD_TOOL:-httpx}"
       SRE_REQUEST_COUNT:     "${SRE_REQUEST_COUNT:-10}"
       LATENCY_THRESHOLD_MS:  "${LATENCY_THRESHOLD_MS:-500}"
+      # Ephemeral build/deploy environment
+      WORKSPACE_ROOT:        "/tmp/tuskersquad-workspaces"
+      DOCKER_NETWORK:         "tuskersquad-net"
+      EPHEMERAL_PORT_RANGE_MIN: "${EPHEMERAL_PORT_RANGE_MIN:-19000}"
+      EPHEMERAL_PORT_RANGE_MAX: "${EPHEMERAL_PORT_RANGE_MAX:-19999}"
+      API_PREFIX:            "${API_PREFIX:-}"
+      DEPLOY_HOST:           "localhost"
+      HEALTH_ENDPOINT:       "/health"
+      CPU_THRESHOLD:         "80"
+      MEM_THRESHOLD:         "80"
       # Logging
       LOG_DIR:               "/app/logs"
     ports:
       - "8000:8000"
     volumes:
       - tuskersquad_logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock  # Required for builder/deployer agents
     depends_on:
       postgres:
         condition: service_healthy

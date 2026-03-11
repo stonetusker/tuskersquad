@@ -116,9 +116,12 @@ def _synthetic_findings(workflow_id: str, fid: int) -> List[Dict[str, Any]]:
     ]
 
 
-def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 1) -> Dict[str, Any]:
+def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 1,
+                       deploy_url: str = "", build_success: bool = False) -> Dict[str, Any]:
     """
     Main entry point called by the graph runner.
+    When deploy_url is provided (ephemeral PR deployment), tests run against that.
+    Otherwise falls back to DEMO_FRONTEND_URL and flags this clearly.
 
     Returns:
         dict with keys: findings, fid, agent_log.
@@ -127,6 +130,24 @@ def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: i
     findings: List[Dict[str, Any]] = []
 
     logger.info("frontend_agent_started", extra={"workflow_id": workflow_id})
+
+    testing_pr_code = bool(deploy_url)
+    if not testing_pr_code:
+        findings.append({
+            "id": fid, "workflow_id": workflow_id, "agent": "frontend",
+            "severity": "MEDIUM",
+            "title": "frontend - tested against permanent demo app, not PR code",
+            "description": (
+                "No ephemeral deployment was available for this PR "
+                f"(build_success={build_success}, deploy_url=empty). "
+                f"Frontend tests ran against the permanent demo frontend at {DEMO_FRONTEND_URL}. "
+                "Test results reflect the baseline app, not the PR changes. "
+                "UI test outcomes may not represent the PR under review."
+            ),
+            "test_name": "pr_coverage_warning",
+            "created_at": datetime.utcnow().isoformat(),
+        })
+        fid += 1
 
     pw_result = _run_playwright()
 

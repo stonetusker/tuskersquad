@@ -201,9 +201,12 @@ def _synthetic_findings(workflow_id: str, fid: int) -> List[Dict[str, Any]]:
     ]
 
 
-def run_security_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 1) -> Dict[str, Any]:
+def run_security_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 1,
+                       deploy_url: str = "", build_success: bool = False) -> Dict[str, Any]:
     """
     Main entry point called by the graph runner.
+    Security probes run against the ephemeral PR deployment when available,
+    falling back to the permanent demo backend.
 
     Returns:
         dict with keys: findings, fid, agent_log.
@@ -213,9 +216,30 @@ def run_security_agent(workflow_id: str, repository: str, pr_number: int, fid: i
 
     logger.info("security_agent_started", extra={"workflow_id": workflow_id})
 
-    if _reachable(DEMO_APP_URL):
+    # Prefer ephemeral PR deployment for accurate security probes
+    target_url = deploy_url if deploy_url else DEMO_APP_URL
+    testing_pr_code = bool(deploy_url)
+
+    if not testing_pr_code:
+        findings.append({
+            "id": fid, "workflow_id": workflow_id, "agent": "security",
+            "severity": "MEDIUM",
+            "title": "security - probed permanent demo app, not PR code",
+            "description": (
+                "No ephemeral deployment was available for this PR "
+                f"(build_success={build_success}, deploy_url=empty). "
+                f"Security probes ran against {DEMO_APP_URL} (permanent demo backend). "
+                "Security findings may not reflect vulnerabilities introduced by the PR. "
+                "A clean bill of health here does NOT mean the PR is secure."
+            ),
+            "test_name": "pr_coverage_warning",
+            "created_at": datetime.utcnow().isoformat(),
+        })
+        fid += 1
+
+    if _reachable(target_url):
         logger.info("demo_app_reachable_running_real_probes", extra={"workflow_id": workflow_id})
-        raw = _run_security_probes(DEMO_APP_URL)
+        raw = _run_security_probes(target_url)
         now = datetime.utcnow().isoformat()
         for issue in raw:
             findings.append({
@@ -245,7 +269,7 @@ def run_security_agent(workflow_id: str, repository: str, pr_number: int, fid: i
     else:
         logger.warning(
             "demo_app_unreachable_using_synthetic_findings",
-            extra={"workflow_id": workflow_id, "url": DEMO_APP_URL},
+            extra={"workflow_id": workflow_id, "url": target_url},
         )
         synth = _synthetic_findings(workflow_id, fid)
         findings.extend(synth)

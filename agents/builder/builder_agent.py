@@ -34,7 +34,8 @@ def run_builder_agent(
 
     try:
         # Clone the repository into the PR workspace
-        repo_url = f"http://tuskersquad-gitea:3000/{repository}.git"
+        gitea_url = os.getenv("GITEA_URL", "http://tuskersquad-gitea:3000").rstrip("/")
+        repo_url = f"{gitea_url}/{repository}.git"
         # Use HEAD SHA for checkout if available
         provider = None
         try:
@@ -189,7 +190,7 @@ def run_builder_agent(
                 # Python build
                 if "requirements.txt" in build_files and not build_success:
                     try:
-                        pip_cmd = ["pip", "install", "-r", "requirements.txt"]
+                        pip_cmd = ["pip", "install", "--break-system-packages", "-r", "requirements.txt"]
                         result = subprocess.run(pip_cmd, cwd=pr_dir, capture_output=True, text=True, timeout=300)
                         if result.returncode == 0:
                             build_success = True
