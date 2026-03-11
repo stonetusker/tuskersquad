@@ -28,27 +28,49 @@ def run_repo_validator_agent(
 
     # use Git provider to check PR info
     provider = None
+    provider_init_error = None
     try:
-        from core.git_provider import get_provider
+        from services.langgraph_api.core.git_provider import get_provider
         provider = get_provider(None)
-    except Exception:
-        provider = None
+    except Exception as e:
+        provider_init_error = str(e)
 
     repo_ok = False
     pr_ok = False
     branch_ok = False
     provider_error = None
 
+    # Check if provider is properly configured (not just instantiated)
     if not provider:
+        findings.append({
+            "id": fid,
+            "agent": "repo_validator",
+            "severity": "HIGH",
+            "title": "Git provider failed to initialize",
+            "description": (
+                f"Could not initialise a Git provider client: {provider_init_error}. "
+                "Check GIT_PROVIDER environment variable and provider-specific config."
+            ),
+            "test_name": "git_provider_config",
+        })
+        fid += 1
+    elif not provider._url() or not provider._token():
+        # Provider exists but is not properly configured
+        missing = []
+        if not provider._url():
+            missing.append("GITEA_URL")
+        if not provider._token():
+            missing.append("GITEA_TOKEN")
         findings.append({
             "id": fid,
             "agent": "repo_validator",
             "severity": "HIGH",
             "title": "Git provider not configured",
             "description": (
-                "Could not initialise a Git provider client. "
-                "Check GIT_PROVIDER, GITEA_URL, and GITEA_TOKEN environment variables. "
-                "The GITEA_TOKEN must have repository and issue read/write scopes."
+                f"Git provider '{provider.name}' is missing required environment variables: {', '.join(missing)}. "
+                f"For Gitea: GITEA_URL should be 'http://tuskersquad-gitea:3000' (or your Gitea instance) "
+                f"and GITEA_TOKEN must be a personal access token with repository and issue read/write scopes. "
+                f"Generate token at Gitea Settings → Applications → Generate Token."
             ),
             "test_name": "git_provider_config",
         })

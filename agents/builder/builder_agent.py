@@ -39,7 +39,7 @@ def run_builder_agent(
         # Use HEAD SHA for checkout if available
         provider = None
         try:
-            from core.git_provider import get_provider
+            from services.langgraph_api.core.git_provider import get_provider
             provider = get_provider(None)
         except Exception:
             pass

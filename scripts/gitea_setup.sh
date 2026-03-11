@@ -204,7 +204,11 @@ else
                 \"secret\": \"${WEBHOOK_SECRET}\"
             },
             \"events\": [\"pull_request\"],
-            \"active\": true
+            \"active\": true,
+            \"push_events\": true,
+            \"pull_request_events\": true,
+            \"issue_events\": false,
+            \"issues_only\": false
         }" \
         "${API}/repos/${ADMIN_USER}/${REPO_NAME}/hooks" || echo "000")
 

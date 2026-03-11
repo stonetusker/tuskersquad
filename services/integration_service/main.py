@@ -49,7 +49,7 @@ GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 GITLAB_TOKEN          = os.getenv("GITLAB_TOKEN",          "")
 GITLAB_WEBHOOK_SECRET = os.getenv("GITLAB_WEBHOOK_SECRET", "")
 
-_GITEA_TRIGGER  = {"opened", "synchronize", "reopened", "created", "reopen"}
+_GITEA_TRIGGER  = {"opened", "synchronized", "reopened", "created", "reopen"}
 _GITHUB_TRIGGER = {"opened", "synchronize", "reopened", "ready_for_review"}
 _GITLAB_TRIGGER = {"open", "reopen", "update"}
 
@@ -236,6 +236,11 @@ def _parse_gitea(payload: dict) -> tuple:
         pr_num = int(pr_num) if pr_num is not None else None
     except (TypeError, ValueError):
         pr_num = None
+    
+    # Log if action is missing (indicates webhook payload issue)
+    if not action and pr_num and repo:
+        logger.warning("gitea_webhook_missing_action repo='%s' pr=%s", repo, pr_num)
+    
     return repo, pr_num, action, sha
 
 
