@@ -358,21 +358,26 @@ def execute_workflow(workflow_id: str) -> None:
             ) or "Repository or PR could not be accessed."
             rationale  = f"Workflow aborted: {reject_desc}"
             risk_level = "HIGH"
+            
+            # Update DB status first (source of truth)
             wf_repo.update_workflow_status(workflow_id, "FAILED")
             try:
                 gov_repo.create_decision(workflow_id, "REJECT")
                 db.commit()
             except Exception:
                 logger.exception("governance_write_failed workflow=%s", workflow_id)
+            
+            # Then update registry to match DB
             _update_registry(workflow_id, "FAILED", rationale, "", risk_level,
                              extra={
                                  "decision": "REJECT",
                                  "rationale": rationale,
                                  "risk_level": risk_level,
                              })
+            
             # Post a clear REJECT comment on the PR
             _post_validation_failure_comment(workflow_id, findings, rationale)
-            logger.error("workflow_aborted_validator_failed workflow=%s reason=%s",
+            logger.error("workflow_aborted_validator_failed workflow=%s reason=%s status=FAILED (DB+Registry updated)",
                          workflow_id, reject_desc)
             return
 
@@ -416,7 +421,7 @@ def execute_workflow(workflow_id: str) -> None:
         if decision in ("APPROVE", "REJECT"):
             wf_repo.update_workflow_status(workflow_id, "COMPLETED")
             _update_registry(workflow_id, "COMPLETED", rationale, qa_summary, risk_level)
-            logger.info("auto_decision workflow=%s decision=%s", workflow_id, decision)
+            logger.info("workflow_completed workflow=%s decision=%s status=COMPLETED (DB+Registry updated)", workflow_id, decision)
             # Agent comments are already posted live inside each graph node.
             # Post only the final summary comment here.
             _post_final_summary(workflow_id, result, qa_summary, risk_level)

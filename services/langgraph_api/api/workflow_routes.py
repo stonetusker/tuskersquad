@@ -259,18 +259,30 @@ async def get_risk_heatmap(db: Session = Depends(get_db)):
 
 @router.get("/workflow/{workflow_id}")
 async def get_workflow(workflow_id: str, db: Session = Depends(get_db)):
-    reg = await workflow_registry.get_workflow(workflow_id)
-    if reg:
-        row = _get_wf_row(db, workflow_id)
-        if row:
-            reg.setdefault("merge_status",  row.merge_status)
-            reg.setdefault("deploy_status", row.deploy_status)
-            reg.setdefault("deploy_url",    row.deploy_url)
-        return reg
+    # ALWAYS use DB as source of truth for status (never from registry cache)
     row = _get_wf_row(db, workflow_id)
-    if row:
-        return _wf_to_dict(row)
-    raise HTTPException(status_code=404, detail="workflow not found")
+    if not row:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    
+    # Start with DB row as authoritative source
+    result = _wf_to_dict(row)
+    
+    # Overlay registry state for real-time in-flight updates (but not status)
+    try:
+        reg = await workflow_registry.get_workflow(workflow_id)
+        if reg:
+            # Use registry for in-flight updates EXCEPT status (DB is source of truth)
+            result["current_agent"] = reg.get("current_agent") or result["current_agent"]
+            result["decision"] = reg.get("decision")
+            result["rationale"] = reg.get("rationale", "")
+            result["qa_summary"] = reg.get("qa_summary", "")
+            result["risk_level"] = reg.get("risk_level", "LOW")
+            result["agent_decisions"] = reg.get("agent_decisions", {})
+            result["analysis_results"] = reg.get("analysis_results", {})
+    except Exception:
+        pass  # Registry lookup failed, use DB only
+    
+    return result
 
 
 @router.get("/workflow/{workflow_id}/merge-status")
@@ -280,6 +292,7 @@ async def get_merge_status(workflow_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="workflow not found")
     return {
         "workflow_id":   workflow_id,
+        "status":        row.status,  # ← Always return DB status
         "merge_status":  row.merge_status,
         "deploy_status": row.deploy_status,
         "deploy_url":    row.deploy_url,
