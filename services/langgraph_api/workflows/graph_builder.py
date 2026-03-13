@@ -887,6 +887,7 @@ def cleanup_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 pr_number=state.get("pr_number", 0),
                 container_name=state.get("container_name", ""),
                 workspace_dir=state.get("workspace_dir", ""),
+                build_artifacts=state.get("build_artifacts", {}),
                 fid=fid,
             )
             findings = result.get("findings", [])

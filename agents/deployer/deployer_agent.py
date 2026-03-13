@@ -1,7 +1,19 @@
 """
 Deployer Agent
 ==============
-Deploys built application to ephemeral environment for testing.
+Deploys built application to ephemeral Docker environment for testing.
+
+FIX B-1: deploy_url now uses the container name on the Docker network
+(e.g. http://pr-2-ephemeral-<uuid>:8080) instead of http://localhost:<port>.
+
+Containers communicate with each other via their names on the shared Docker
+network.  Using localhost:<host_port> resolved to the langgraph container
+itself, not the ephemeral container, causing every downstream health check
+and test to fail with "connection refused".
+
+The -p host_port:8080 mapping is still created so operators can reach the
+container from their laptop for manual debugging, but it is never used as
+the deploy_url passed to tester/api_validator/runtime_analyzer.
 """
 
 import logging
@@ -16,7 +28,7 @@ logger = logging.getLogger("agents.deployer")
 
 
 def _find_free_port(start_port: int = 19000, max_attempts: int = 1000) -> int:
-    """Find an available port starting from start_port."""
+    """Find an available port on the host for the optional -p debug mapping."""
     for port in range(start_port, start_port + max_attempts):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -24,7 +36,7 @@ def _find_free_port(start_port: int = 19000, max_attempts: int = 1000) -> int:
                 return port
         except OSError:
             continue
-    raise RuntimeError(f"No free port found in range {start_port}-{start_port + max_attempts}")
+    return 0  # 0 = no debug port available; container still runs without -p
 
 
 def run_deployer_agent(
@@ -92,41 +104,27 @@ def run_deployer_agent(
             })
             fid += 1
         else:
-            # Find a free port for this deployment
-            try:
-                # Use high ephemeral port range to avoid collisions with running services
-                port_min = int(os.getenv("EPHEMERAL_PORT_RANGE_MIN", "19000"))
-                host_port = _find_free_port(port_min)
-            except RuntimeError as e:
-                findings.append({
-                    "id": fid,
-                    "agent": "deployer",
-                    "severity": "HIGH",
-                    "title": "Port allocation failed",
-                    "description": str(e),
-                    "test_name": "port_allocation",
-                })
-                fid += 1
-                return {
-                    "findings": findings,
-                    "agent_log": {
-                        "agent": "deployer",
-                        "status": "COMPLETED",
-                        "started_at": start.isoformat(),
-                        "completed_at": datetime.utcnow().isoformat(),
-                        "deploy_success": False,
-                    },
-                    "fid": fid,
-                    "deploy_success": False,
-                }
-
-            # Run ephemeral container
+            # Run ephemeral container on the shared Docker network.
+            # BUG B-1 FIX: deploy_url is set to http://<container_name>:8080 so that
+            # tester/api_validator/runtime_analyzer — which run inside the langgraph
+            # container — reach the ephemeral container via the Docker network.
+            # Routing through localhost:<host_port> failed because localhost inside
+            # the langgraph container resolves to the langgraph container itself.
             docker_network = os.getenv("DOCKER_NETWORK", "tuskersquad-net")
+
+            # Optional: expose a host-side debug port so developers can curl the
+            # ephemeral container from their laptop.  We still build the run command
+            # without -p if no free port is available — the container works fine
+            # for internal testing without it.
+            port_min = int(os.getenv("EPHEMERAL_PORT_RANGE_MIN", "19000"))
+            debug_port = _find_free_port(port_min)
+            port_args = ["-p", f"{debug_port}:8080"] if debug_port else []
+
             run_cmd = docker_args + [
                 "run", "-d",
                 "--name", container_name,
                 "--network", docker_network,
-                "-p", f"{host_port}:8080",
+            ] + port_args + [
                 docker_image
             ]
 
@@ -134,7 +132,8 @@ def run_deployer_agent(
 
             if run_result.returncode == 0:
                 container_id = run_result.stdout.strip()
-                deploy_url = f"http://localhost:{host_port}"
+                # FIX B-1: use container name on Docker network, NOT localhost
+                deploy_url = f"http://{container_name}:8080"
 
                 # Wait for container to be running and health endpoint to respond
                 max_attempts = 30

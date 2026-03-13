@@ -91,7 +91,10 @@ services:
   # webhook automatically. You no longer need to click through the Gitea UI.
   # Re-runs safely on every "make up" - the script checks before creating.
   gitea-setup:
-    image: alpine/curl:latest
+    # FIX F-1: Changed from alpine/curl to alpine/git so gitea_setup.sh can
+    # push the ShopFlow demo app source into the newly created repository.
+    # alpine/git includes wget (for API calls) and git.
+    image: alpine/git:latest
     container_name: tuskersquad-gitea-setup
     restart: "no"
     environment:
@@ -104,6 +107,8 @@ services:
       REPO_NAME:          "${GITEA_REPO:-shopflow}"
     volumes:
       - ../scripts/gitea_setup.sh:/gitea_setup.sh:ro
+      - ../apps:/app/apps:ro          # FIX F-1: demo app source for initial push
+      - ../infra/Dockerfile.demo:/app/Dockerfile.demo:ro  # FIX F-1: Dockerfile for shopflow
     command: ["sh", "/gitea_setup.sh"]
     depends_on:
       gitea:
@@ -271,6 +276,7 @@ services:
     volumes:
       - tuskersquad_logs:/app/logs
       - /var/run/docker.sock:/var/run/docker.sock  # Required for builder/deployer agents
+      - tuskersquad_workspaces:/tmp/tuskersquad-workspaces  # FIX B-5: persist workspaces across restarts
     depends_on:
       postgres:
         condition: service_healthy
@@ -388,3 +394,4 @@ volumes:
   postgres_data:
   gitea_data:
   tuskersquad_logs:
+  tuskersquad_workspaces:   # FIX B-5: named volume so PR workspaces survive container restarts

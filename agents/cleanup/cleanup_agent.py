@@ -2,6 +2,12 @@
 Cleanup Agent
 =============
 Stops and removes containers created for a PR and deletes workspace.
+
+FIX A-3: Docker image name is now read from the build_artifacts dict passed
+from state instead of being reconstructed as the hardcoded "pr-{pr_number}-build".
+After fix B-3 in builder_agent.py, the image tag includes the workflow_id
+(e.g. pr-2-<uuid>), so cleanup must use the same tag or it will silently skip
+the image removal and leave dangling images on the Docker host.
 """
 
 import logging
@@ -21,6 +27,7 @@ def run_cleanup_agent(
     pr_number: int,
     container_name: str = "",
     workspace_dir: str = "",
+    build_artifacts: Dict[str, Any] = None,
     fid: int = 1,
 ) -> Dict[str, Any]:
     start = datetime.utcnow()
@@ -75,8 +82,10 @@ def run_cleanup_agent(
             })
             fid += 1
 
-    # Remove Docker image built for this PR (if it exists)
-    pr_image = f"pr-{pr_number}-build"
+    # FIX A-3: Read the image tag from build_artifacts (set by builder_agent).
+    # BEFORE: f"pr-{pr_number}-build"  → hardcoded tag no longer matches after B-3 fix
+    # AFTER:  build_artifacts["docker_image"] contains the workflow-specific tag
+    pr_image = (build_artifacts or {}).get("docker_image") or f"pr-{pr_number}-build"
     try:
         img_check = subprocess.run(
             ["docker", "image", "inspect", pr_image],

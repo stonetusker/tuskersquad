@@ -2,11 +2,23 @@
 Builder Agent
 =============
 Builds the application from PR source code in an isolated environment.
+
+FIX B-2: Workspace directory is now unique per workflow_id, not just pr_number.
+  BEFORE: pr-{pr_number}/        → two retests of PR #2 share the same directory
+  AFTER:  pr-{pr_number}-{uuid}/ → every workflow run is fully isolated
+
+FIX B-3: Docker image tag is now unique per workflow_id.
+  BEFORE: pr-{pr_number}-build        → tag collision when PR is retested concurrently
+  AFTER:  pr-{pr_number}-{short_uuid} → each workflow builds its own image
+
+FIX B-4: git clone now embeds GITEA_TOKEN as HTTP basic-auth credentials so
+private repositories (and any repo requiring auth) can be cloned successfully.
+  BEFORE: git clone http://host/repo.git   → 401 for private repos
+  AFTER:  git clone http://token:token@host/repo.git
 """
 
 import logging
 import os
-import tempfile
 import subprocess
 from datetime import datetime
 from typing import Any, Dict, List
@@ -29,13 +41,37 @@ def run_builder_agent(
     build_success = False
     build_output = ""
     workspace_root = os.getenv("WORKSPACE_ROOT", "/workspace")
-    pr_dir = os.path.join(workspace_root, f"pr-{pr_number}")
+
+    # FIX B-2: Include workflow_id in the directory name so concurrent runs of
+    # the same PR number each get their own isolated workspace.
+    # BEFORE: f"pr-{pr_number}"          → collision on same PR number
+    # AFTER:  f"pr-{pr_number}-{workflow_id}"
+    safe_wf_id = str(workflow_id).replace("/", "_")[:36]
+    pr_dir = os.path.join(workspace_root, f"pr-{pr_number}-{safe_wf_id}")
     os.makedirs(pr_dir, exist_ok=True)
 
+    # FIX B-3: Include workflow_id in the Docker image tag so concurrent builds
+    # of the same PR number never overwrite each other.
+    # BEFORE: f"pr-{pr_number}-build"        → tag collision
+    # AFTER:  f"pr-{pr_number}-{short_uuid}"
+    image_tag = f"pr-{pr_number}-{safe_wf_id}"
+
     try:
-        # Clone the repository into the PR workspace
+        # Clone the repository into the PR workspace.
+        # FIX B-4: Embed GITEA_TOKEN as HTTP basic-auth credentials so the clone
+        # works for private repositories and Gitea instances that require auth.
+        # BEFORE: http://host/repo.git               → 401 for private repos
+        # AFTER:  http://token:token@host/repo.git
         gitea_url = os.getenv("GITEA_URL", "http://tuskersquad-gitea:3000").rstrip("/")
-        repo_url = f"{gitea_url}/{repository}.git"
+        gitea_token = os.getenv("GITEA_TOKEN", "")
+        if gitea_token:
+            # Insert credentials: http(s)://token:token@host/...
+            scheme, rest = gitea_url.split("://", 1)
+            authenticated_url = f"{scheme}://{gitea_token}:{gitea_token}@{rest}"
+        else:
+            authenticated_url = gitea_url
+        repo_url = f"{authenticated_url}/{repository}.git"
+
         # Use HEAD SHA for checkout if available
         provider = None
         try:
@@ -124,7 +160,7 @@ def run_builder_agent(
                         user = os.getenv("DEPLOY_SSH_USER", "")
                         host_ref = f"ssh://{user}@{dh}" if user else f"ssh://{dh}"
                         docker_args += ["-H", host_ref]
-                    build_cmd = docker_args + ["build", "-t", f"pr-{pr_number}-build", pr_dir]
+                    build_cmd = docker_args + ["build", "-t", image_tag, pr_dir]
                     build_result = subprocess.run(
                         build_cmd,
                         capture_output=True,
@@ -293,6 +329,6 @@ def run_builder_agent(
         "agent_log": log,
         "fid": fid,
         "build_success": build_success,
-        "build_artifacts": {"docker_image": f"pr-{pr_number}-build"} if build_success else {},
+        "build_artifacts": {"docker_image": image_tag} if build_success else {},
         "workspace_dir": pr_dir,
     }
