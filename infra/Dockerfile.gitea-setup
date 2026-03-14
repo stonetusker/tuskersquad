@@ -1,0 +1,24 @@
+# ── TuskerSquad: Gitea Setup Container ────────────────────────────────────────
+#
+# This one-shot container initialises Gitea on first boot:
+#   - Creates the shopflow repository
+#   - Registers the TuskerSquad webhook
+#   - Pushes the ShopFlow demo app source code into the repo
+#
+# WHY A CUSTOM IMAGE:
+#   alpine/curl  → has curl but NO git (cannot push source code)
+#   alpine/git   → has git but NO curl (setup script uses curl for all API calls)
+#   This image   → has both, built from alpine in one RUN layer (tiny image ~25 MB)
+#
+FROM alpine:3.19
+
+RUN apk add --no-cache \
+        curl \
+        git \
+        openssh-client \
+        bash \
+    && git config --global http.sslVerify false \
+    && git config --global init.defaultBranch main
+
+# Nothing else needed - gitea_setup.sh is bind-mounted at runtime
+CMD ["sh"]

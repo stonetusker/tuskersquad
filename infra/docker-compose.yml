@@ -91,24 +91,27 @@ services:
   # webhook automatically. You no longer need to click through the Gitea UI.
   # Re-runs safely on every "make up" - the script checks before creating.
   gitea-setup:
-    # FIX F-1: Changed from alpine/curl to alpine/git so gitea_setup.sh can
-    # push the ShopFlow demo app source into the newly created repository.
-    # alpine/git includes wget (for API calls) and git.
-    image: alpine/git:latest
+    # Custom image: alpine + curl + git (see infra/Dockerfile.gitea-setup).
+    # alpine/curl has no git; alpine/git has no curl.
+    # gitea_setup.sh needs curl for every Gitea REST API call AND git to push
+    # the ShopFlow demo source into the newly created repository.
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.gitea-setup
     container_name: tuskersquad-gitea-setup
     restart: "no"
     environment:
-      GITEA_URL:          "http://tuskersquad-gitea:3000"
-      GITEA_ADMIN_USER:   "${GITEA_ADMIN_USER:-tusker}"
-      GITEA_ADMIN_PASS:   "${GITEA_ADMIN_PASS:-tusker1234}"
-      GITEA_TOKEN:        "${GITEA_TOKEN:-}"
+      GITEA_URL:            "http://tuskersquad-gitea:3000"
+      GITEA_ADMIN_USER:     "${GITEA_ADMIN_USER:-tusker}"
+      GITEA_ADMIN_PASS:     "${GITEA_ADMIN_PASS:-tusker1234}"
+      GITEA_TOKEN:          "${GITEA_TOKEN:-}"
       GITEA_WEBHOOK_SECRET: "${GITEA_WEBHOOK_SECRET:-}"
-      INTEGRATION_URL:    "http://tuskersquad-integration:8001"
-      REPO_NAME:          "${GITEA_REPO:-shopflow}"
+      INTEGRATION_URL:      "http://tuskersquad-integration:8001"
+      REPO_NAME:            "${GITEA_REPO:-shopflow}"
     volumes:
       - ../scripts/gitea_setup.sh:/gitea_setup.sh:ro
-      - ../apps:/app/apps:ro          # FIX F-1: demo app source for initial push
-      - ../infra/Dockerfile.demo:/app/Dockerfile.demo:ro  # FIX F-1: Dockerfile for shopflow
+      - ../apps:/app/apps:ro                              # demo app source for initial push
+      - ../infra/Dockerfile.demo:/app/Dockerfile.demo:ro  # Dockerfile template for shopflow repo
     command: ["sh", "/gitea_setup.sh"]
     depends_on:
       gitea:

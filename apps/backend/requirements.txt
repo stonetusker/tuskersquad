@@ -2,8 +2,10 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.36
 python-jose[cryptography]==3.3.0
-bcrypt==4.0.1
+# bcrypt >=4.1.2 ships pre-built wheels for aarch64 (Apple Silicon / ARM Linux).
+# bcrypt==4.0.1 required Rust to compile from source on ARM, causing build failures.
+bcrypt>=4.1.2
 pydantic==2.9.2
 aiofiles==24.1.0
-# Allow pip to resolve cffi for the target arch (avoids cffi 2.0.0 build failure on aarch64)
+# Allow pip to resolve cffi for the target arch
 cryptography>=42.0.0,<44.0.0
