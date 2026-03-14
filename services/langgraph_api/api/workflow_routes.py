@@ -650,7 +650,20 @@ async def gitea_info():
             # Get authenticated user
             ur = await client.get(f"{gitea_url}/api/v1/user", headers=headers)
             if ur.status_code != 200:
-                result["error"] = f"Gitea /user returned {ur.status_code}: {ur.text[:200]}"
+                body = ur.text[:300]
+                if ur.status_code == 401 and ("uid: 0" in body or "does not exist" in body):
+                    result["error"] = (
+                        "GITEA_TOKEN has no scopes or is invalid. "
+                        "Run: make setup  to generate a fresh token, "
+                        "then copy it to infra/.env and run: make restart"
+                    )
+                elif ur.status_code == 401:
+                    result["error"] = (
+                        "Gitea authentication failed (HTTP 401). "
+                        "Check GITEA_TOKEN in infra/.env and run: make restart"
+                    )
+                else:
+                    result["error"] = f"Gitea /user returned {ur.status_code}: {body}"
                 return result
             user_data = ur.json()
             username  = user_data.get("login", "")

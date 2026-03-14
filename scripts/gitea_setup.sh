@@ -162,10 +162,16 @@ else
         -H "${AUTH_HEADER}" \
         "${API}/users/${ADMIN_USER}/tokens/tuskersquad-auto" 2>/dev/null || true
 
+    # Gitea 1.21 requires explicit scopes — a scopeless token has zero permissions
+    # and returns "user does not exist [uid: 0]" on every API call.
+    # Scopes needed:
+    #   read:user        — GET /user (auth check, UI connection test)
+    #   write:repository — read repo contents, list files, get PR diffs
+    #   write:issue      — post PR review comments and labels
     TOKEN_RESP=$(curl -s -X POST \
         -H "${AUTH_HEADER}" \
         -H "Content-Type: application/json" \
-        -d '{"name":"tuskersquad-auto"}' \
+        -d '{"name":"tuskersquad-auto","scopes":["read:user","write:repository","write:issue"]}' \
         "${API}/users/${ADMIN_USER}/tokens" 2>/dev/null || echo "{}")
 
     AUTO_TOKEN=$(printf '%s' "${TOKEN_RESP}" | grep -o '"sha1":"[^"]*"' | sed 's/"sha1":"//;s/"//')
