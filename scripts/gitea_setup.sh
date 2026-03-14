@@ -200,13 +200,23 @@ if printf '%s' "${HOOKS}" | grep -q "${WEBHOOK_URL}"; then
     log "  webhook already registered"
 else
     log "  registering webhook -> ${WEBHOOK_URL}"
+    # Gitea 1.21 webhook create API:
+    # - "events" array controls which events fire (use "pull_request" for PRs)
+    # - "branch_filter" "*" = all branches
+    # - Do NOT send push_events/pull_request_events as top-level fields in the
+    #   create body — those are read-only response fields, not request fields.
     HOOK_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST \
         -H "${AUTH_HEADER}" \
         -H "Content-Type: application/json" \
-        -d "{\"type\":\"gitea\",\"config\":{\"url\":\"${WEBHOOK_URL}\",\"content_type\":\"json\",\"secret\":\"${WEBHOOK_SECRET}\"},\"events\":[\"pull_request\"],\"active\":true,\"push_events\":true,\"pull_request_events\":true,\"issue_events\":false}" \
+        -d "{\"type\":\"gitea\",\"config\":{\"url\":\"${WEBHOOK_URL}\",\"content_type\":\"json\",\"secret\":\"${WEBHOOK_SECRET}\"},\"events\":[\"pull_request\"],\"branch_filter\":\"*\",\"active\":true}" \
         "${API}/repos/${ADMIN_USER}/${REPO_NAME}/hooks" 2>/dev/null || echo "000")
-    [ "$HOOK_CODE" = "201" ] && log "  webhook registered" || warn "webhook HTTP ${HOOK_CODE}"
+    if [ "$HOOK_CODE" = "201" ]; then
+        log "  webhook registered (HTTP 201)"
+        log "  To verify: http://localhost:3000/${ADMIN_USER}/${REPO_NAME}/settings/hooks"
+    else
+        warn "webhook registration returned HTTP ${HOOK_CODE}"
+    fi
 fi
 
 ########################################
@@ -289,6 +299,16 @@ log ""
 log "=========================================="
 log "  TuskerSquad Gitea setup complete!"
 log "=========================================="
-log "  UI         : ${GITEA_URL}"
-log "  Repository : ${GITEA_URL}/${ADMIN_USER}/${REPO_NAME}"
-log "  Webhook    : ${WEBHOOK_URL}"
+log "  Gitea UI   : http://localhost:3000"
+log "  Repository : http://localhost:3000/${ADMIN_USER}/${REPO_NAME}"
+log "  Webhook    : http://localhost:3000/${ADMIN_USER}/${REPO_NAME}/settings/hooks"
+log ""
+log "Next steps:"
+log "  1. Copy the GITEA_TOKEN printed above into infra/.env"
+log "  2. Run: make restart   (this recreates services with the new token)"
+log "  3. Open http://localhost:5173 — Gitea should show as connected"
+log ""
+log "NOTE: The webhook URL (http://tuskersquad-integration:8001/...) is a"
+log "Docker-internal address — it works for Gitea→integration delivery but"
+log "shows as unreachable if you click 'Test Delivery' from your browser."
+log "This is expected. Webhook delivery works when you open a real PR."

@@ -23,19 +23,17 @@ up:
 	@echo "Webhook is auto-registered by the gitea-setup container."
 	@echo "Add GITEA_TOKEN to infra/.env then run: make restart"
 
-# restart: bounces only the application services (langgraph, integration, dashboard,
-# frontend, demo-backend, catalog, order, user, postgres).
-# gitea and gitea-setup are intentionally excluded:
-#   - gitea  data (repos, users, tokens) lives in the `gitea_data` named volume
-#             and must NOT be wiped on a normal restart.
-#   - gitea-setup is a one-shot init container; it must NOT be re-run on restart
-#             because it would create a duplicate token and is a no-op anyway
-#             (the repo already exists and all files are already uploaded).
+# restart: recreates application services so they pick up any .env changes
+# (e.g. a new GITEA_TOKEN). Uses `up -d` not `docker compose restart` because
+# `docker compose restart` only bounces the process — it does NOT re-read infra/.env
+# or re-inject environment variables. `up -d` recreates the container with fresh env.
+# Gitea and gitea-setup are intentionally excluded.
 restart:
-	$(COMPOSE) restart postgres langgraph-api integration-service dashboard frontend \
+	$(COMPOSE) up -d --no-build \
+	    postgres langgraph-api integration-service dashboard frontend \
 	    demo-backend catalog-service order-service user-service
 	@echo ""
-	@echo "Application services restarted (Gitea and gitea-setup left untouched)."
+	@echo "Services restarted with updated infra/.env (Gitea untouched)."
 	@echo "  UI       http://localhost:5173"
 	@echo "  API Docs http://localhost:8000/docs"
 
