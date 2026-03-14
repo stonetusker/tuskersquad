@@ -2,13 +2,28 @@
 FROM python:3.11-slim
 
 # System deps:
-#   gcc, libffi-dev  → needed to compile bcrypt / cryptography C extensions
-#   libpq-dev        → psycopg2-binary may need headers on some platforms
-#   curl             → useful for manual container healthchecks
-#   git              → required by builder_agent and repo_validator_agent to clone PRs
-#   docker.io        → Docker CLI required by builder_agent, deployer_agent, cleanup_agent
+#   gcc, libffi-dev  → compile bcrypt / cryptography C extensions
+#   libpq-dev        → psycopg2-binary headers
+#   curl, gnupg      → used below to add Docker's apt repo
+#   git              → builder_agent and repo_validator_agent clone PRs
+#
+# Docker CLI (docker-ce-cli):
+#   Required by builder_agent, deployer_agent, and cleanup_agent to build images,
+#   run ephemeral containers, and clean up. We install from Docker Inc's official
+#   apt repository because docker.io (the Debian-packaged version) is not available
+#   in Debian 12 Bookworm — the base image for python:3.11-slim.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libffi-dev libpq-dev curl git docker.io \
+ && apt-get install -y --no-install-recommends \
+        gcc libffi-dev libpq-dev curl git ca-certificates gnupg \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+ && chmod a+r /etc/apt/keyrings/docker.gpg \
+ && . /etc/os-release \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends docker-ce-cli \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
