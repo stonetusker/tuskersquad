@@ -1,24 +1,51 @@
 # ── TuskerSquad: Gitea Setup Container ────────────────────────────────────────
 #
 # This one-shot container initialises Gitea on first boot:
-#   - Creates the shopflow repository
-#   - Registers the TuskerSquad webhook
-#   - Pushes the ShopFlow demo app source code into the repo
+#   1. Creates the shopflow repository via Gitea REST API
+#   2. Registers the TuskerSquad webhook
+#   3. Uploads the ShopFlow demo app source via Gitea Contents API
+#      (base64-encoded per-file curl calls, no git needed)
 #
-# WHY A CUSTOM IMAGE:
-#   alpine/curl  → has curl but NO git (cannot push source code)
-#   alpine/git   → has git but NO curl (setup script uses curl for all API calls)
-#   This image   → has both, built from alpine in one RUN layer (tiny image ~25 MB)
+# WHY SOURCE IS BAKED IN (not volume-mounted):
+#   Volume mounts only work when the image is rebuilt. `docker compose up`
+#   without --build reuses the old container image, so volume-mounted source
+#   may be absent. Baking the source in at build time guarantees it is always
+#   present regardless of how compose is invoked.
+#
+# WHY GITEA CONTENTS API (not git push):
+#   The Gitea Contents API uploads one base64-encoded file per POST call.
+#   This is pure curl, requires no git config, no clone, no tty — much more
+#   reliable inside a one-shot init container.
 #
 FROM alpine:3.19
 
-RUN apk add --no-cache \
-        curl \
-        git \
-        openssh-client \
-        bash \
-    && git config --global http.sslVerify false \
-    && git config --global init.defaultBranch main
+# curl for API calls; python3 for reliable base64 encoding of binary-safe files
+RUN apk add --no-cache curl python3
 
-# Nothing else needed - gitea_setup.sh is bind-mounted at runtime
+# ── Bake ShopFlow demo source into the image at build time ────────────────────
+# gitea_setup.sh reads files from /shopflow-src/ at runtime.
+# Build context is the project root (context: .. in docker-compose.yml).
+
+WORKDIR /shopflow-src
+
+COPY apps/__init__.py                    apps/__init__.py
+COPY apps/backend/__init__.py            apps/backend/__init__.py
+COPY apps/backend/routes/__init__.py     apps/backend/routes/__init__.py
+COPY apps/backend/auth.py                apps/backend/auth.py
+COPY apps/backend/bug_flags.py           apps/backend/bug_flags.py
+COPY apps/backend/database.py            apps/backend/database.py
+COPY apps/backend/dependencies.py        apps/backend/dependencies.py
+COPY apps/backend/main.py                apps/backend/main.py
+COPY apps/backend/models.py              apps/backend/models.py
+COPY apps/backend/requirements.txt       apps/backend/requirements.txt
+COPY apps/backend/schemas.py             apps/backend/schemas.py
+COPY apps/backend/seed_data.py           apps/backend/seed_data.py
+COPY apps/backend/routes/auth.py         apps/backend/routes/auth.py
+COPY apps/backend/routes/checkout.py     apps/backend/routes/checkout.py
+COPY apps/backend/routes/orders.py       apps/backend/routes/orders.py
+COPY apps/backend/routes/products.py     apps/backend/routes/products.py
+COPY apps/backend/routes/user.py         apps/backend/routes/user.py
+COPY apps/backend/static/index.html      apps/backend/static/index.html
+
+WORKDIR /
 CMD ["sh"]

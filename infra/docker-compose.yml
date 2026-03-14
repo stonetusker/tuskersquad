@@ -91,10 +91,12 @@ services:
   # webhook automatically. You no longer need to click through the Gitea UI.
   # Re-runs safely on every "make up" - the script checks before creating.
   gitea-setup:
-    # Custom image: alpine + curl + git (see infra/Dockerfile.gitea-setup).
-    # alpine/curl has no git; alpine/git has no curl.
-    # gitea_setup.sh needs curl for every Gitea REST API call AND git to push
-    # the ShopFlow demo source into the newly created repository.
+    # Custom image built from infra/Dockerfile.gitea-setup.
+    # Contains: curl (Gitea REST API calls) + python3 (base64 encoding).
+    # ShopFlow demo source is BAKED INTO the image at build time so it is
+    # always present regardless of whether the user runs `make up --build`
+    # or plain `make up`.  Files are uploaded via the Gitea Contents API
+    # (one base64-encoded curl POST per file — no git clone/push needed).
     build:
       context: ..
       dockerfile: infra/Dockerfile.gitea-setup
@@ -110,8 +112,6 @@ services:
       REPO_NAME:            "${GITEA_REPO:-shopflow}"
     volumes:
       - ../scripts/gitea_setup.sh:/gitea_setup.sh:ro
-      - ../apps:/app/apps:ro                              # demo app source for initial push
-      - ../infra/Dockerfile.demo:/app/Dockerfile.demo:ro  # Dockerfile template for shopflow repo
     command: ["sh", "/gitea_setup.sh"]
     depends_on:
       gitea:

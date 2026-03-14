@@ -23,6 +23,12 @@ up:
 	@echo "Webhook is auto-registered by the gitea-setup container."
 	@echo "Add GITEA_TOKEN to infra/.env then run: make restart"
 
+setup:
+	@echo "Re-running Gitea setup (creates repo + uploads source if missing)..."
+	$(COMPOSE) rm -f gitea-setup 2>/dev/null || true
+	$(COMPOSE) up --build -d gitea-setup
+	@echo "Done. Check logs: docker logs tuskersquad-gitea-setup"
+
 down:
 	$(COMPOSE) down
 
