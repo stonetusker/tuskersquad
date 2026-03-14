@@ -6,7 +6,7 @@
 COMPOSE = docker compose -f infra/docker-compose.yml --env-file infra/.env
 
 .PHONY: up down restart build logs logs-api logs-dash logs-frontend \
-        health ps env \
+        health ps env setup \
         demo-security demo-pricing demo-latency demo-all demo-clean
 
 # -- Lifecycle ---------------------------------------------------------

@@ -101,28 +101,46 @@ done
 
 ########################################
 # Step 2 — Admin authentication
+# Always establish working auth via ADMIN_USER + ADMIN_PASS first.
+# These credentials are set in docker-compose.yml environment and are always
+# correct for this Gitea instance — they never go stale.
+# A GITEA_TOKEN in .env CAN be stale (created against a different Gitea volume,
+# wiped by `make down -v`, etc.) so we never use it as the primary auth path.
 ########################################
 
-log "Step 2: Authenticating as ${ADMIN_USER} ..."
-if [ -n "${GITEA_TOKEN}" ]; then
-    AUTH_HEADER="Authorization: token ${GITEA_TOKEN}"
-    log "  auth method: token"
-else
-    ENCODED=$(printf '%s:%s' "${ADMIN_USER}" "${ADMIN_PASS}" | base64 | tr -d '\n')
-    AUTH_HEADER="Authorization: Basic ${ENCODED}"
-    log "  auth method: basic (${ADMIN_USER}:****)"
-fi
+log "Step 2: Authenticating as ${ADMIN_USER} (basic auth) ..."
+ENCODED=$(printf '%s:%s' "${ADMIN_USER}" "${ADMIN_PASS}" | base64 | tr -d '\n')
+BASIC_HEADER="Authorization: Basic ${ENCODED}"
+AUTH_HEADER="${BASIC_HEADER}"
 
 i=0; AUTH_CODE="000"
 while [ "$i" -lt "$MAX_RETRIES" ]; do
     AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
         -H "${AUTH_HEADER}" "${API}/user" 2>/dev/null || echo "000")
-    [ "$AUTH_CODE" = "200" ] && { log "  admin auth OK"; break; }
+    [ "$AUTH_CODE" = "200" ] && { log "  basic auth OK"; break; }
     log "  auth attempt $((i+1))/${MAX_RETRIES} — HTTP ${AUTH_CODE}"
     sleep "$SLEEP_TIME"
     i=$((i+1))
 done
-[ "$AUTH_CODE" = "200" ] || die "Admin authentication failed (HTTP ${AUTH_CODE})"
+[ "$AUTH_CODE" = "200" ] || die "Admin authentication failed (HTTP ${AUTH_CODE}) — check GITEA_ADMIN_USER / GITEA_ADMIN_PASS in docker-compose.yml"
+
+# If a GITEA_TOKEN is set, validate it. If it works, use it for API calls
+# (enables higher-privilege operations). If it returns 401, it is stale —
+# log a warning and continue with basic auth (all repo/webhook ops will still work).
+if [ -n "${GITEA_TOKEN}" ]; then
+    TOKEN_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "Authorization: token ${GITEA_TOKEN}" "${API}/user" 2>/dev/null || echo "000")
+    if [ "${TOKEN_CODE}" = "200" ]; then
+        log "  GITEA_TOKEN valid — using token auth for API calls"
+        AUTH_HEADER="Authorization: token ${GITEA_TOKEN}"
+    else
+        log "  WARNING: GITEA_TOKEN returned HTTP ${TOKEN_CODE} (stale/invalid)"
+        log "  Falling back to basic auth. To fix: remove GITEA_TOKEN from infra/.env"
+        log "  and run: make setup  (a fresh token will be auto-created)"
+        GITEA_TOKEN=""   # clear so Step 3 creates a fresh one
+        AUTH_HEADER="${BASIC_HEADER}"
+    fi
+fi
 
 ########################################
 # Step 3 — Auto-create API token
@@ -130,7 +148,7 @@ done
 
 log "Step 3: Checking API token ..."
 if [ -n "${GITEA_TOKEN}" ]; then
-    log "  GITEA_TOKEN already set — skipping auto-create"
+    log "  GITEA_TOKEN valid — skipping auto-create"
 else
     log "  GITEA_TOKEN not set — creating tuskersquad-auto token ..."
 
