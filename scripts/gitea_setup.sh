@@ -101,17 +101,19 @@ done
 
 ########################################
 # Step 2 — Admin authentication
-# Always establish working auth via ADMIN_USER + ADMIN_PASS first.
-# These credentials are set in docker-compose.yml environment and are always
-# correct for this Gitea instance — they never go stale.
-# A GITEA_TOKEN in .env CAN be stale (created against a different Gitea volume,
-# wiped by `make down -v`, etc.) so we never use it as the primary auth path.
+#
+# Always use basic auth (ADMIN_USER + ADMIN_PASS) for ALL setup operations.
+# These credentials are set in docker-compose.yml and are always correct for
+# this Gitea instance — they never go stale.
+#
+# GITEA_TOKEN in .env is for the running services (langgraph, integration) to
+# post PR comments. It is NOT used here — a scopeless or stale token would
+# cause 401/403 on repo/webhook/content operations.
 ########################################
 
-log "Step 2: Authenticating as ${ADMIN_USER} (basic auth) ..."
+log "Step 2: Authenticating as ${ADMIN_USER} ..."
 ENCODED=$(printf '%s:%s' "${ADMIN_USER}" "${ADMIN_PASS}" | base64 | tr -d '\n')
-BASIC_HEADER="Authorization: Basic ${ENCODED}"
-AUTH_HEADER="${BASIC_HEADER}"
+AUTH_HEADER="Authorization: Basic ${ENCODED}"
 
 i=0; AUTH_CODE="000"
 while [ "$i" -lt "$MAX_RETRIES" ]; do
@@ -122,61 +124,46 @@ while [ "$i" -lt "$MAX_RETRIES" ]; do
     sleep "$SLEEP_TIME"
     i=$((i+1))
 done
-[ "$AUTH_CODE" = "200" ] || die "Admin authentication failed (HTTP ${AUTH_CODE}) — check GITEA_ADMIN_USER / GITEA_ADMIN_PASS in docker-compose.yml"
-
-# If a GITEA_TOKEN is set, validate it. If it works, use it for API calls
-# (enables higher-privilege operations). If it returns 401, it is stale —
-# log a warning and continue with basic auth (all repo/webhook ops will still work).
-if [ -n "${GITEA_TOKEN}" ]; then
-    TOKEN_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-        -H "Authorization: token ${GITEA_TOKEN}" "${API}/user" 2>/dev/null || echo "000")
-    if [ "${TOKEN_CODE}" = "200" ]; then
-        log "  GITEA_TOKEN valid — using token auth for API calls"
-        AUTH_HEADER="Authorization: token ${GITEA_TOKEN}"
-    else
-        log "  WARNING: GITEA_TOKEN returned HTTP ${TOKEN_CODE} (stale/invalid)"
-        log "  Falling back to basic auth. To fix: remove GITEA_TOKEN from infra/.env"
-        log "  and run: make setup  (a fresh token will be auto-created)"
-        GITEA_TOKEN=""   # clear so Step 3 creates a fresh one
-        AUTH_HEADER="${BASIC_HEADER}"
-    fi
-fi
+[ "$AUTH_CODE" = "200" ] || die "Admin authentication failed (HTTP ${AUTH_CODE}) — check GITEA_ADMIN_USER / GITEA_ADMIN_PASS"
 
 ########################################
-# Step 3 — Auto-create API token
+# Step 3 — Auto-create API token for services
+#
+# The token is NOT used by this setup script for any operations.
+# All setup (repo create, webhook, file upload) uses basic auth throughout —
+# basic auth has full admin access and never goes stale.
+#
+# The token is created here purely so the langgraph and integration services
+# can post PR comments to Gitea. It is printed to logs for the operator to
+# copy into infra/.env.
 ########################################
 
-log "Step 3: Checking API token ..."
-if [ -n "${GITEA_TOKEN}" ]; then
-    log "  GITEA_TOKEN valid — skipping auto-create"
+log "Step 3: Creating service API token ..."
+
+# Always delete the old auto-token and issue a fresh one so the operator
+# gets a valid token regardless of previous state.
+curl -s -o /dev/null -X DELETE \
+    -H "${AUTH_HEADER}" \
+    "${API}/users/${ADMIN_USER}/tokens/tuskersquad-auto" 2>/dev/null || true
+
+TOKEN_RESP=$(curl -s \
+    -X POST \
+    -H "${AUTH_HEADER}" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"tuskersquad-auto"}' \
+    "${API}/users/${ADMIN_USER}/tokens" 2>/dev/null || echo "{}")
+
+AUTO_TOKEN=$(printf '%s' "${TOKEN_RESP}" | grep -o '"sha1":"[^"]*"' | sed 's/"sha1":"//;s/"//')
+
+if [ -n "${AUTO_TOKEN}" ]; then
+    log "  token created"
+    log "  >>> COPY TO infra/.env:  GITEA_TOKEN=${AUTO_TOKEN}"
+    log "  >>> Then run: make restart"
 else
-    log "  GITEA_TOKEN not set — creating tuskersquad-auto token ..."
-
-    # Delete any stale token from a previous run (idempotent)
-    curl -s -o /dev/null -X DELETE \
-        -H "${AUTH_HEADER}" \
-        "${API}/users/${ADMIN_USER}/tokens/tuskersquad-auto" 2>/dev/null || true
-
-    TOKEN_RESP=$(curl -s \
-        -X POST \
-        -H "${AUTH_HEADER}" \
-        -H "Content-Type: application/json" \
-        -d '{"name":"tuskersquad-auto"}' \
-        "${API}/users/${ADMIN_USER}/tokens" 2>/dev/null || echo "{}")
-
-    AUTO_TOKEN=$(printf '%s' "${TOKEN_RESP}" | grep -o '"sha1":"[^"]*"' | sed 's/"sha1":"//;s/"//')
-
-    if [ -n "${AUTO_TOKEN}" ]; then
-        log "  token created successfully"
-        log "  >>> ADD TO infra/.env:  GITEA_TOKEN=${AUTO_TOKEN}"
-        GITEA_TOKEN="${AUTO_TOKEN}"
-        AUTH_HEADER="Authorization: token ${GITEA_TOKEN}"
-    else
-        warn "Could not auto-create token. PR comments will not work."
-        warn "Manually: Gitea UI > ${ADMIN_USER} > Settings > Applications"
-        warn "Required scopes: repository + issue (read/write), then set GITEA_TOKEN in infra/.env"
-    fi
+    warn "Could not create service token — PR comment posting will not work"
+    warn "Create manually: Gitea UI > ${ADMIN_USER} > Settings > Applications"
 fi
+# AUTH_HEADER remains BASIC_HEADER for all subsequent setup steps
 
 ########################################
 # Step 4 — Create repository
