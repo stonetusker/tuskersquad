@@ -23,6 +23,26 @@ up:
 	@echo "Webhook is auto-registered by the gitea-setup container."
 	@echo "Add GITEA_TOKEN to infra/.env then run: make restart"
 
+# restart: bounces only the application services (langgraph, integration, dashboard,
+# frontend, demo-backend, catalog, order, user, postgres).
+# gitea and gitea-setup are intentionally excluded:
+#   - gitea  data (repos, users, tokens) lives in the `gitea_data` named volume
+#             and must NOT be wiped on a normal restart.
+#   - gitea-setup is a one-shot init container; it must NOT be re-run on restart
+#             because it would create a duplicate token and is a no-op anyway
+#             (the repo already exists and all files are already uploaded).
+restart:
+	$(COMPOSE) restart postgres langgraph-api integration-service dashboard frontend \
+	    demo-backend catalog-service order-service user-service
+	@echo ""
+	@echo "Application services restarted (Gitea and gitea-setup left untouched)."
+	@echo "  UI       http://localhost:5173"
+	@echo "  API Docs http://localhost:8000/docs"
+
+# setup: first-time Gitea initialisation OR recovery after `make down -v`.
+# Run this ONLY when the shopflow repo is missing from Gitea.
+# It will create the repo, register the webhook, upload all source files,
+# and print a fresh GITEA_TOKEN to copy into infra/.env.
 setup:
 	@echo "Re-running Gitea setup (creates repo + uploads source if missing)..."
 	$(COMPOSE) rm -f gitea-setup 2>/dev/null || true
@@ -31,8 +51,6 @@ setup:
 
 down:
 	$(COMPOSE) down
-
-restart: down up
 
 build:
 	$(COMPOSE) build --no-cache
