@@ -391,6 +391,10 @@ services:
 networks:
   tuskersquad-net:
     driver: bridge
+    name: tuskersquad-net   # explicit name prevents docker compose from prepending the project prefix
+                            # (e.g. "tuskersquad_tuskersquad-net"). Without this, deployer_agent
+                            # passes "tuskersquad-net" to `docker run --network` and Docker
+                            # cannot find the prefixed name → "network not found" error.
 
 
 volumes:
