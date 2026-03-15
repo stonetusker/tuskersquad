@@ -73,6 +73,8 @@ def _wf_to_dict(r: WorkflowRun) -> dict:
         "merge_status":  r.merge_status,
         "deploy_status": r.deploy_status,
         "deploy_url":    r.deploy_url,
+        "public_url":    getattr(r, "public_url", "") or "",
+        "host_port":     getattr(r, "host_port", 0) or 0,
         "created_at":    r.created_at.isoformat() if r.created_at else None,
         "updated_at":    r.updated_at.isoformat() if r.updated_at else None,
     }
@@ -279,6 +281,14 @@ async def get_workflow(workflow_id: str, db: Session = Depends(get_db)):
             result["risk_level"] = reg.get("risk_level", "LOW")
             result["agent_decisions"] = reg.get("agent_decisions", {})
             result["analysis_results"] = reg.get("analysis_results", {})
+            # Live deploy access info (set by deployer agent)
+            if reg.get("public_url"):
+                result["public_url"] = reg["public_url"]
+                result["host_port"]  = reg.get("host_port", 0)
+            if reg.get("deploy_url"):
+                result["deploy_url"] = reg["deploy_url"]
+            if reg.get("container_name"):
+                result["container_name"] = reg["container_name"]
     except Exception:
         pass  # Registry lookup failed, use DB only
     

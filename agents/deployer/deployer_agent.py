@@ -54,6 +54,8 @@ def run_deployer_agent(
     findings = []
     deploy_success = False
     deploy_url = ""
+    public_url = ""
+    host_port = 0
     container_name = f"pr-{pr_number}-ephemeral-{workflow_id}"
 
     try:
@@ -105,20 +107,20 @@ def run_deployer_agent(
             fid += 1
         else:
             # Run ephemeral container on the shared Docker network.
-            # BUG B-1 FIX: deploy_url is set to http://<container_name>:8080 so that
-            # tester/api_validator/runtime_analyzer — which run inside the langgraph
-            # container — reach the ephemeral container via the Docker network.
-            # Routing through localhost:<host_port> failed because localhost inside
-            # the langgraph container resolves to the langgraph container itself.
+            # deploy_url uses the Docker-network container name so agents inside
+            # the langgraph container reach the ephemeral container correctly.
+            # public_url uses DOCKER_HOST_IP + the host-side port so a human
+            # reviewer can open the app in a browser before approving the PR.
             docker_network = os.getenv("DOCKER_NETWORK", "tuskersquad-net")
 
-            # Optional: expose a host-side debug port so developers can curl the
-            # ephemeral container from their laptop.  We still build the run command
-            # without -p if no free port is available — the container works fine
-            # for internal testing without it.
+            # DOCKER_HOST_IP: IP or hostname of the machine running Docker.
+            # Defaults to "localhost" for local dev.
+            # Set to server LAN/public IP in infra/.env for remote deployments.
+            docker_host_ip = os.getenv("DOCKER_HOST_IP", "localhost")
+
             port_min = int(os.getenv("EPHEMERAL_PORT_RANGE_MIN", "19000"))
-            debug_port = _find_free_port(port_min)
-            port_args = ["-p", f"{debug_port}:8080"] if debug_port else []
+            host_port = _find_free_port(port_min)
+            port_args = ["-p", f"{host_port}:8080"] if host_port else []
 
             run_cmd = docker_args + [
                 "run", "-d",
@@ -132,8 +134,10 @@ def run_deployer_agent(
 
             if run_result.returncode == 0:
                 container_id = run_result.stdout.strip()
-                # FIX B-1: use container name on Docker network, NOT localhost
+                # Internal URL used by agents on the Docker network
                 deploy_url = f"http://{container_name}:8080"
+                # Public URL for human reviewers to open in a browser
+                public_url = f"http://{docker_host_ip}:{host_port}" if host_port else ""
 
                 # Wait for container to be running and health endpoint to respond
                 max_attempts = 30
@@ -160,12 +164,20 @@ def run_deployer_agent(
                     health_result = subprocess.run(health_check_cmd, capture_output=True, text=True)
                     if health_result.returncode == 0:
                         deploy_success = True
+                        public_msg = (
+                            f"\n\nAccess in browser: {public_url}"
+                            if public_url else ""
+                        )
                         findings.append({
                             "id": fid,
                             "agent": "deployer",
                             "severity": "LOW",
                             "title": "Ephemeral deployment successful",
-                            "description": f"Application deployed to {deploy_url}, healthy after {attempt * 2}s",
+                            "description": (
+                                f"Application deployed and healthy after {attempt * 2}s.\n"
+                                f"Internal URL (agents): {deploy_url}\n"
+                                f"Container name: {container_name}{public_msg}"
+                            ),
                             "test_name": "ephemeral_deploy",
                         })
                         break
@@ -222,11 +234,16 @@ def run_deployer_agent(
     logger.info("deployer_complete workflow=%s repo=%s pr=%d success=%s url=%s",
                 workflow_id, repository, pr_number, deploy_success, deploy_url)
 
+    # public_url is set only when a host_port was successfully allocated
+    # and DOCKER_HOST_IP is configured. It may be empty if _find_free_port
+    # returned 0 (no free port in range).
     return {
         "findings": findings,
         "agent_log": log,
         "fid": fid,
         "deploy_success": deploy_success,
         "deploy_url": deploy_url,
+        "public_url": public_url if deploy_success else "",
+        "host_port": host_port if deploy_success else 0,
         "container_name": container_name,
     }

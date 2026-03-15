@@ -399,6 +399,8 @@ def execute_workflow(workflow_id: str) -> None:
                              "git_provider": git_provider,
                              "analysis_results": result.get("analysis_results", {}),
                              "deploy_url": result.get("deploy_url"),
+                             "public_url": result.get("public_url", ""),
+                             "host_port": result.get("host_port", 0),
                              "container_name": result.get("container_name"),
                              "workspace_dir": result.get("workspace_dir"),
                              "diff_context": {

@@ -41,7 +41,9 @@ try:
         build_artifacts: Dict[str, Any]
         # ── Deploy phase outputs ──────────────────────────────────────────────
         deploy_success: bool
-        deploy_url: str
+        deploy_url: str        # internal Docker-network URL used by agents
+        public_url: str        # external URL for human access: http://<DOCKER_HOST_IP>:<host_port>
+        host_port: int         # host-side port bound to container port 8080
         container_name: str
         # ── Test phase outputs ────────────────────────────────────────────────
         test_success: bool

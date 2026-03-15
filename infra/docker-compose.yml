@@ -265,6 +265,11 @@ services:
       # Ephemeral build/deploy environment
       WORKSPACE_ROOT:        "/tmp/tuskersquad-workspaces"
       DOCKER_NETWORK:         "tuskersquad-net"
+      # IP or hostname of the Docker host — used to build the public URL
+      # that human reviewers use to access the ephemeral PR container.
+      # Default is "localhost" (works for local dev on the same machine).
+      # Set to your server's LAN or public IP for remote deployments.
+      DOCKER_HOST_IP:         "${DOCKER_HOST_IP:-localhost}"
       EPHEMERAL_PORT_RANGE_MIN: "${EPHEMERAL_PORT_RANGE_MIN:-19000}"
       EPHEMERAL_PORT_RANGE_MAX: "${EPHEMERAL_PORT_RANGE_MAX:-19999}"
       API_PREFIX:            "${API_PREFIX:-}"

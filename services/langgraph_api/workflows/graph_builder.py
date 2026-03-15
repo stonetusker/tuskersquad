@@ -581,11 +581,16 @@ def deployer_node(state: Dict[str, Any]) -> Dict[str, Any]:
             fid              = result.get("fid", fid + len(findings))
             deploy_success   = result.get("deploy_success", False)
             deploy_url       = result.get("deploy_url", "")
+            public_url       = result.get("public_url", "")
+            host_port        = result.get("host_port", 0)
             container_name   = result.get("container_name", "")
             log              = result.get("agent_log", {
                 "agent": "deployer", "status": "COMPLETED",
                 "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
             })
+            if public_url:
+                log["public_url"] = public_url
+                log["host_port"]  = host_port
 
             _post_agent_comment_now("deployer", findings, state)
             return {
@@ -594,6 +599,8 @@ def deployer_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "_fid": fid,
                 "deploy_success": deploy_success,
                 "deploy_url": deploy_url,
+                "public_url": public_url,
+                "host_port": host_port,
                 "container_name": container_name,
             }
         except Exception as exc:
