@@ -126,7 +126,11 @@ def _post_agent_comment_now(
             for f in my_findings[:6]:
                 sev  = f.get("severity", "LOW")
                 stag = _SEV_TAG.get(sev, sev)
-                desc = (f.get("description") or "")[:140]
+                # Raise limit so deployer/builder descriptions with URLs fit.
+                # The finding title already carries the public_url for deployer,
+                # but keep description useful too.
+                desc_limit = 280 if f.get("agent") in ("deployer", "builder") else 140
+                desc = (f.get("description") or "")[:desc_limit]
                 rel  = f.get("diff_relevance", "")
                 rel_note = f" *(diff: {rel})*" if rel and rel not in ("unknown", "systemic") else ""
                 lines.append(f"- **{stag if stag else sev}** {f.get('title','?')} -- {desc}{rel_note}")

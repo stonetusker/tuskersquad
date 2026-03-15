@@ -28,7 +28,18 @@ logger = logging.getLogger("agents.deployer")
 
 
 def _find_free_port(start_port: int = 19000, max_attempts: int = 1000) -> int:
-    """Find an available port on the host for the optional -p debug mapping."""
+    """
+    Find an available port ON THE DOCKER HOST for -p host_port:8080.
+
+    NOTE: socket.bind() inside this container only checks ports free
+    inside the langgraph-api container — not on the Docker host.
+    Using it led to every workflow picking port 19000 and colliding.
+
+    The correct approach is to pass -p 0:8080 to docker run and let the
+    host OS assign a guaranteed-free ephemeral port.  This function is
+    kept as a fallback but is no longer the primary port-selection method.
+    See run_deployer_agent() which uses -p 0:8080 + docker port readback.
+    """
     for port in range(start_port, start_port + max_attempts):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -36,7 +47,7 @@ def _find_free_port(start_port: int = 19000, max_attempts: int = 1000) -> int:
                 return port
         except OSError:
             continue
-    return 0  # 0 = no debug port available; container still runs without -p
+    return 0
 
 
 def run_deployer_agent(
@@ -118,15 +129,17 @@ def run_deployer_agent(
             # Set to server LAN/public IP in infra/.env for remote deployments.
             docker_host_ip = os.getenv("DOCKER_HOST_IP", "localhost")
 
-            port_min = int(os.getenv("EPHEMERAL_PORT_RANGE_MIN", "19000"))
-            host_port = _find_free_port(port_min)
-            port_args = ["-p", f"{host_port}:8080"] if host_port else []
-
+            # Use -p 0:8080 so the host OS picks a guaranteed-free ephemeral
+            # port.  socket.bind() inside this container only sees ports free
+            # inside the langgraph container itself — not on the Docker host —
+            # so it always returned 19000 and caused port collisions when two
+            # PR reviews ran concurrently.  With -p 0:8080 Docker/the host OS
+            # selects the port, then we read it back with `docker port`.
             run_cmd = docker_args + [
                 "run", "-d",
                 "--name", container_name,
                 "--network", docker_network,
-            ] + port_args + [
+                "-p", "0:8080",
                 docker_image
             ]
 
@@ -136,6 +149,23 @@ def run_deployer_agent(
                 container_id = run_result.stdout.strip()
                 # Internal URL used by agents on the Docker network
                 deploy_url = f"http://{container_name}:8080"
+
+                # Read back the actual host port that Docker assigned.
+                # `docker port <id> 8080` prints e.g. "0.0.0.0:19342"
+                host_port = 0
+                try:
+                    port_result = subprocess.run(
+                        docker_args + ["port", container_id, "8080"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    # Output: "0.0.0.0:19342" or ":::19342" — take the last token after ":"
+                    if port_result.returncode == 0 and port_result.stdout.strip():
+                        port_line = port_result.stdout.strip().split("\n")[0]
+                        host_port = int(port_line.rsplit(":", 1)[-1])
+                except Exception as _pe:
+                    logger.warning("deployer_port_readback_failed container=%s err=%s",
+                                   container_name, _pe)
+
                 # Public URL for human reviewers to open in a browser
                 public_url = f"http://{docker_host_ip}:{host_port}" if host_port else ""
 
@@ -164,19 +194,23 @@ def run_deployer_agent(
                     health_result = subprocess.run(health_check_cmd, capture_output=True, text=True)
                     if health_result.returncode == 0:
                         deploy_success = True
-                        public_msg = (
-                            f"\n\nAccess in browser: {public_url}"
+                        # Title includes the public URL so it always
+                        # appears in the PR comment (description is truncated
+                        # to 140 chars in the comment formatter).
+                        access_info = (
+                            f" — Preview: {public_url}"
                             if public_url else ""
                         )
                         findings.append({
                             "id": fid,
                             "agent": "deployer",
                             "severity": "LOW",
-                            "title": "Ephemeral deployment successful",
+                            "title": f"Ephemeral deployment successful{access_info}",
                             "description": (
                                 f"Application deployed and healthy after {attempt * 2}s.\n"
-                                f"Internal URL (agents): {deploy_url}\n"
-                                f"Container name: {container_name}{public_msg}"
+                                f"Container: {container_name}  port: {host_port}\n"
+                                f"Internal (agents): {deploy_url}\n"
+                                f"Browser access: {public_url if public_url else 'set DOCKER_HOST_IP in infra/.env'}"
                             ),
                             "test_name": "ephemeral_deploy",
                         })
