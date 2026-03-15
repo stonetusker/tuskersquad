@@ -1331,20 +1331,33 @@ def route_after_validator(state: Dict[str, Any]) -> str:
 
 
 def route_after_judge(state: Dict[str, Any]) -> str:
-    """Route after judge: APPROVE/REJECT go to END, REVIEW_REQUIRED goes to human_approval."""
+    """Route after judge.
+    APPROVE/REJECT → cleanup (container no longer needed, human has read the result).
+    REVIEW_REQUIRED → human_approval (keep container alive so human can inspect the app).
+    Cleanup runs AFTER human_approval so the ephemeral container stays accessible
+    to the human reviewer until they make their decision.
+    """
     decision = (state.get("decision") or "REVIEW_REQUIRED").upper()
-    if decision == "APPROVE":
-        return "end"
-    elif decision == "REJECT":
-        return "end"
-    else:
-        return "human_approval"
+    if decision in ("APPROVE", "REJECT"):
+        return "cleanup"
+    return "human_approval"
 
 
 def route_after_human(state: Dict[str, Any]) -> str:
-    """Route after human approval: RETEST goes back to planner, everything else ends."""
-    decision = (state.get("human_decision") or "APPROVE").upper()
-    if decision == "RETEST":
+    """Route after human approval.
+    Always goes to cleanup first to tear down the ephemeral container.
+    cleanup then routes to planner (RETEST) or END.
+    """
+    return "cleanup"
+
+
+def route_after_cleanup(state: Dict[str, Any]) -> str:
+    """Route after cleanup.
+    If the human chose RETEST, go back to planner for a fresh pipeline run.
+    Otherwise end the workflow.
+    """
+    human_decision = (state.get("human_decision") or "APPROVE").upper()
+    if human_decision == "RETEST":
         return "planner"
     return "end"
 
@@ -1412,23 +1425,32 @@ def build_graph():
         builder.add_edge("correlator",   "challenger")
         builder.add_edge("challenger",   "qa_lead")
         builder.add_edge("qa_lead",      "judge")
-        # always clean up after judge (whether approved or not)
-        builder.add_edge("judge",        "cleanup")
-        # after cleanup, follow judge decision rules (approve/reject end, review_required -> human approval)
+        # Pipeline order for ephemeral container lifecycle:
+        #   APPROVE / REJECT  → cleanup immediately (human has read the result, no review needed)
+        #   REVIEW_REQUIRED   → human_approval first (keep container alive for human inspection)
+        #                       → cleanup after human decides
+        #                       → planner (RETEST) or END
+        #
+        # This ensures the ephemeral PR container is accessible at its public URL
+        # (http://DOCKER_HOST_IP:port) while the human reviewer is making their decision.
         builder.add_conditional_edges(
-            "cleanup",
+            "judge",
             route_after_judge,
-            {"end": END, "human_approval": "human_approval"},
+            {"cleanup": "cleanup", "human_approval": "human_approval"},
         )
 
-        # Conditional: human_approval → planner (retest) or END
+        # human_approval always goes to cleanup next
         builder.add_conditional_edges(
             "human_approval",
             route_after_human,
-            {
-                "planner": "planner",
-                "end": END,
-            },
+            {"cleanup": "cleanup"},
+        )
+
+        # After cleanup: end normally, or retest (RETEST decision from human)
+        builder.add_conditional_edges(
+            "cleanup",
+            route_after_cleanup,
+            {"planner": "planner", "end": END},
         )
 
         # MemorySaver checkpointer - state is saved after every node
@@ -1560,6 +1582,8 @@ class SimpleGraph:
             "build_artifacts":   {},
             "deploy_success":    False,
             "deploy_url":        "",
+            "public_url":        "",
+            "host_port":         0,
             "container_name":    "",
             "workspace_dir":     "",
             "test_success":      False,
@@ -1621,7 +1645,17 @@ class SimpleGraph:
             partial = node_fn(current)
             _merge(current, partial)
 
-        # ── Step 5: Cleanup ───────────────────────────────────────────────────
+        # ── Step 5: Human approval gate (REVIEW_REQUIRED only) ─────────────
+        # Keep the ephemeral container alive while the human reviews it.
+        # human_approval_node blocks until the human approves/rejects/retests.
+        decision = (current.get("decision") or "").upper()
+        if decision == "REVIEW_REQUIRED":
+            partial = human_approval_node(current)
+            _merge(current, partial)
+
+        # ── Step 6: Cleanup ───────────────────────────────────────────────────
+        # Always run cleanup AFTER human approval so the ephemeral container
+        # remains accessible at its public URL until the human has decided.
         partial = cleanup_node(current)
         _merge(current, partial)
 
