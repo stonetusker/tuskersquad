@@ -136,11 +136,15 @@ def run_tester_agent(
             # API endpoint tests
             # Configurable endpoint prefix - defaults to /api for ShopFlow
             api_prefix = os.getenv("API_PREFIX", "")
+            # These endpoints match the ShopFlow demo app routes exactly.
+            # /login (not /auth/login) — ShopFlow uses a flat route structure.
+            # POST /login with no body → 422 Unprocessable Entity (Pydantic validation)
+            # POST /checkout with no token → 401 Unauthorized
             api_tests = [
-                {"endpoint": f"{api_prefix}/products", "method": "GET", "expected_status": 200},
-                {"endpoint": f"{api_prefix}/auth/login", "method": "POST", "expected_status": 422},  # Validation error expected
-                {"endpoint": f"{api_prefix}/checkout", "method": "POST", "expected_status": 401},  # Auth required
-                {"endpoint": "/health", "method": "GET", "expected_status": 200},  # Health check
+                {"endpoint": f"{api_prefix}/products",  "method": "GET",  "expected_status": 200},
+                {"endpoint": f"{api_prefix}/login",     "method": "POST", "expected_status": 422},
+                {"endpoint": f"{api_prefix}/checkout",  "method": "POST", "expected_status": 401},
+                {"endpoint": "/health",                 "method": "GET",  "expected_status": 200},
             ]
 
             api_passed = 0

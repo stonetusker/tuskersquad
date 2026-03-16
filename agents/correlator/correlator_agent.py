@@ -140,6 +140,15 @@ def _build_rca_chain(
     if not matched_client and not matched_server:
         return None
 
+    # Require at least one server-side log event to confirm a root cause chain.
+    # Client-only keyword matches produce false positives: words like "auth",
+    # "checkout", "stock" appear in coverage-warning descriptions even on clean runs.
+    # A genuine root cause always has server-side evidence (a log event from a
+    # microservice that recorded the failure). Without it, we cannot confirm the
+    # defect is actually active in the deployed code.
+    if not matched_server:
+        return None
+
     evidence_lines = []
     for f in matched_client[:3]:
         evidence_lines.append(
