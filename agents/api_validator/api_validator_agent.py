@@ -38,10 +38,14 @@ def run_api_validator_agent(
         # Test public endpoints only - auth-gated routes would always return 401/403
         # and generate false positive MEDIUM findings.
         api_prefix = os.getenv("API_PREFIX", "")
+        # Endpoints that exist in ShopFlow and are always public.
+        # /categories does NOT exist — ShopFlow has no category route.
+        # POST /login with empty body returns 422 (Pydantic validation error) — not 401.
         endpoint_tests = [
-            ("/health",                   "200"),   # health check - always public
-            (f"{api_prefix}/products",    "200"),   # product listing - public
-            (f"{api_prefix}/categories",  "200"),   # category listing - public
+            ("/health",                       "200"),   # health check
+            (f"{api_prefix}/products",        "200"),   # product list — always public
+            (f"{api_prefix}/products/1",      "200"),   # single product — always public
+            (f"{api_prefix}/products/search?q=Laptop", "200"),  # search — always public
         ]
         for ep, expected_code in endpoint_tests:
             tests_run += 1

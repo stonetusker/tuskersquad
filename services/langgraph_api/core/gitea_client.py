@@ -159,19 +159,19 @@ def build_initial_review_comment(
         "",
     ]
 
-    # Root cause analysis brief from correlator (the most important section for developers)
-    if developer_brief:
-        lines += [
-            developer_brief[:2000],
-            "",
-        ]
-
-    # QA Lead summary box
+    # QA Lead summary — shown first so it's never trimmed by Gitea's PR comment preview
     if qa_summary:
         lines += [
             "### QA Lead Summary",
             "",
             qa_summary[:800],
+            "",
+        ]
+
+    # Root cause analysis brief from correlator
+    if developer_brief:
+        lines += [
+            developer_brief[:2000],
             "",
         ]
 

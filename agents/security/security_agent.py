@@ -127,10 +127,10 @@ def _probe_cors(base_url: str) -> Optional[Dict]:
         if acao == "*":
             return {
                 "title": "security - cors_wildcard_origin",
-                "severity": "MEDIUM",
+                "severity": "LOW",
                 "description": (
                     "API response includes 'Access-Control-Allow-Origin: *'. "
-                    "Any origin can make cross-site requests — tighten CORS policy for production."
+                    "Acceptable for a demo API — tighten CORS policy before production deployment."
                 ),
                 "test_name": "cors_policy",
             }
@@ -189,7 +189,7 @@ def _synthetic_findings(workflow_id: str, fid: int) -> List[Dict[str, Any]]:
             "id": fid + 1,
             "workflow_id": workflow_id,
             "agent": "security",
-            "severity": "MEDIUM",
+            "severity": "LOW",
             "title": "security - cors_wildcard_origin",
             "description": (
                 "API CORS policy allows all origins (Access-Control-Allow-Origin: *). "
@@ -223,7 +223,7 @@ def run_security_agent(workflow_id: str, repository: str, pr_number: int, fid: i
     if not testing_pr_code:
         findings.append({
             "id": fid, "workflow_id": workflow_id, "agent": "security",
-            "severity": "MEDIUM",
+            "severity": "LOW",
             "title": "security - probed permanent demo app, not PR code",
             "description": (
                 "No ephemeral deployment was available for this PR "

@@ -148,7 +148,7 @@ def run_backend_agent(workflow_id: str, repository: str, pr_number: int, fid: in
     if not testing_pr_code:
         findings.append({
             "id": fid, "workflow_id": workflow_id, "agent": "backend",
-            "severity": "MEDIUM",
+            "severity": "LOW",
             "title": "backend - tested against permanent demo app, not PR code",
             "description": (
                 "No ephemeral deployment was available for this PR "

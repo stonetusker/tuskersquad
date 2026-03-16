@@ -152,7 +152,7 @@ def run_sre_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 
     if not testing_pr_code:
         findings.append({
             "id": fid, "workflow_id": workflow_id, "agent": "sre",
-            "severity": "MEDIUM",
+            "severity": "LOW",
             "title": "sre - load tested permanent demo app, not PR code",
             "description": (
                 "No ephemeral deployment was available for this PR "

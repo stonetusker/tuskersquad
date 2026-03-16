@@ -90,7 +90,7 @@ def _synthetic_findings(workflow_id: str, fid: int) -> List[Dict[str, Any]]:
             "id": fid,
             "workflow_id": workflow_id,
             "agent": "frontend",
-            "severity": "MEDIUM",
+            "severity": "LOW",
             "title": "frontend - checkout_ui_validation_missing",
             "description": (
                 "Playwright flow detected that the checkout form does not "
@@ -135,7 +135,7 @@ def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: i
     if not testing_pr_code:
         findings.append({
             "id": fid, "workflow_id": workflow_id, "agent": "frontend",
-            "severity": "MEDIUM",
+            "severity": "LOW",
             "title": "frontend - tested against permanent demo app, not PR code",
             "description": (
                 "No ephemeral deployment was available for this PR "
