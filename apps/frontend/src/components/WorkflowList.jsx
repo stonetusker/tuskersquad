@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import api from '../api'
+import { formatRelative, fullTooltip } from '../utils/time'
 
 const STATUS_CFG = {
   COMPLETED:              { color: '#22c55e', label: 'Done'     },
@@ -72,7 +73,11 @@ export default function WorkflowList({ onSelect, selectedId }) {
                     <span style={{ fontSize: 9, color: '#3b82f6', fontWeight: 600 }}>deployed</span>
                   )}
                   <span style={{ color: '#d1d5db', marginLeft: 'auto', fontSize: 10 }}>
-                    {w.created_at ? new Date(w.created_at).toLocaleTimeString() : ''}
+                    {w.created_at ? (
+                    <span title={fullTooltip(w.created_at)}>
+                      {formatRelative(w.created_at)}
+                    </span>
+                  ) : ''}
                   </span>
                 </div>
               </li>

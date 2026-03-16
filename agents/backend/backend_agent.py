@@ -19,6 +19,40 @@ TEST_DIR          = os.getenv("BACKEND_TEST_DIR", "tests/api")
 BACKEND_TEST_TOOL = os.getenv("BACKEND_TEST_TOOL", "pytest")  # pytest | unittest | nose2
 
 
+def _clean_pytest_output(raw: str, max_len: int = 400) -> str:
+    """
+    Strip pytest separator lines (===, ---) and blank lines from output.
+    These decorative lines add no value in a PR comment or dashboard table.
+    Return only lines that carry actual failure or error information.
+    """
+    kept = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        # Skip pure separator lines: "==== ERRORS ====", "---- short test summary ----"
+        if not stripped:
+            continue
+        if all(c in '=-_ ' for c in stripped):
+            continue
+        if stripped.startswith('=') and stripped.endswith('=') and len(stripped) > 4:
+            # e.g. "===== ERRORS =====" or "===== 1 failed in 0.23s ====="
+            # keep summary lines (contain digits) but strip the decoration
+            inner = stripped.strip('= ').strip()
+            if inner and not all(c in '= ' for c in inner):
+                kept.append(inner)
+            continue
+        if stripped.startswith('-') and stripped.endswith('-') and len(stripped) > 4:
+            inner = stripped.strip('- ').strip()
+            if inner:
+                kept.append(inner)
+            continue
+        kept.append(line.rstrip())
+
+    result = '\n'.join(kept)
+    if len(result) > max_len:
+        result = result[:max_len] + '…'
+    return result
+
+
 def _run_pytest(test_dir: str, base_url: str) -> Dict[str, Any]:
     result = {"passed": 0, "failed": 0, "errors": 0, "output": "", "test_names": [], "ran": False}
 
@@ -135,7 +169,7 @@ def run_backend_agent(workflow_id: str, repository: str, pr_number: int, fid: in
                 "id": fid, "workflow_id": workflow_id, "agent": "backend",
                 "severity": "HIGH",
                 "title": f"backend - {pr['failed']} {BACKEND_TEST_TOOL} test(s) failed",
-                "description": f"{pr['failed']} failed, {pr['errors']} errors. Output: {pr['output'][:400]}",
+                "description": f"{pr['failed']} failed, {pr['errors']} errors. Output: {_clean_pytest_output(pr['output'])}",
                 "test_name": "checkout_latency", "created_at": now,
             })
             fid += 1

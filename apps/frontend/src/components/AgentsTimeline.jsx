@@ -1,4 +1,5 @@
 import React from 'react'
+import { formatClock, fullTooltip } from '../utils/time'
 
 const AGENT_ICONS = {
   planner: 'PL', backend: 'BE', frontend: 'FE', security: 'SEC',
@@ -68,7 +69,7 @@ export default function AgentsTimeline({ agents, currentAgent }) {
                 {duration && <span className="agent-dur">{duration}</span>}
               </div>
               {a.started_at && (
-                <div className="agent-time">{new Date(a.started_at).toLocaleTimeString()}</div>
+                <div className="agent-time" title={fullTooltip(a.started_at)}>{formatClock(a.started_at)}</div>
               )}
               {a.output && (
                 <pre className="agent-output">{a.output.slice(0, 200)}</pre>
