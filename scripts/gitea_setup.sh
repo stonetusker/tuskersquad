@@ -248,6 +248,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir --upgrade pip==24.3.1
 COPY requirements.txt /tmp/demo-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/demo-requirements.txt
+RUN pip install --no-cache-dir pytest pytest-asyncio httpx anyio
 COPY apps/ /app/apps/
 ENV PYTHONPATH=/app
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 CMD python3 -c \"import urllib.request; urllib.request.urlopen(\'http://localhost:8080/health\', timeout=4)\"
@@ -287,6 +288,13 @@ print(base64.b64encode(content).decode(), end='')
     upload_file "apps/backend/routes/products.py"     "${SRC}/apps/backend/routes/products.py"  "${COMMIT_MSG}"
     upload_file "apps/backend/routes/user.py"         "${SRC}/apps/backend/routes/user.py"      "${COMMIT_MSG}"
     upload_file "apps/backend/static/index.html"      "${SRC}/apps/backend/static/index.html"   "${COMMIT_MSG}"
+
+    # Upload test files — committed into the repo so the Backend Engineer agent
+    # can run them against the deployed PR container during the review pipeline.
+    upload_file "apps/backend/tests/__init__.py"       "${SRC}/apps/backend/tests/__init__.py"    "${COMMIT_MSG}"
+    upload_file "apps/backend/tests/conftest.py"       "${SRC}/apps/backend/tests/conftest.py"    "${COMMIT_MSG}"
+    upload_file "apps/backend/tests/test_health.py"    "${SRC}/apps/backend/tests/test_health.py" "${COMMIT_MSG}"
+    upload_file "apps/backend/tests/test_api.py"       "${SRC}/apps/backend/tests/test_api.py"    "${COMMIT_MSG}"
 
     log "  source upload complete"
 fi

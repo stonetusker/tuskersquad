@@ -15,7 +15,9 @@ from typing import Dict, Any, List
 logger = logging.getLogger("agents.backend")
 
 DEMO_APP_URL      = os.getenv("DEMO_APP_URL",      "http://tuskersquad-demo-backend:8080")
-TEST_DIR          = os.getenv("BACKEND_TEST_DIR", "tests/api")
+# Tests live inside the app folder so they are committed into the shopflow
+# repository and available inside the cloned PR workspace.
+TEST_DIR          = os.getenv("BACKEND_TEST_DIR", "apps/backend/tests")
 BACKEND_TEST_TOOL = os.getenv("BACKEND_TEST_TOOL", "pytest")  # pytest | unittest | nose2
 
 
