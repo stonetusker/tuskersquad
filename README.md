@@ -1,315 +1,284 @@
-# TuskerSquad — Stonetusker Systems
-### Agentic AI PR Governance Platform
+# TuskerSquad
 
-> **13 AI agents. One human decision. Automatic build, deploy, test, and merge.**
+### Agentic AI PR Governance Platform — by Stonetusker Systems
 
-TuskerSquad runs an autonomous 13-agent pipeline over every Pull Request:
-**Planner → Backend → Frontend → Security → SRE → Builder → Deployer → Tester → Runtime Analyzer → Log Inspector → Correlator → Challenger → QA Lead → Judge**
+> **18 specialised AI agents. One human decision. Automatic build, deploy, test, and merge.**
 
-When the Judge flags `REVIEW_REQUIRED`, a human approves or rejects from the dashboard.
-On **Approve**, TuskerSquad can **automatically merge the PR** and **trigger your deploy pipeline** — zero manual steps.
+TuskerSquad watches every Pull Request on your Git repository and runs a complete
+autonomous review: it clones the PR code, builds a Docker image, deploys an ephemeral
+container, executes API tests, runs OWASP security probes, measures p95 latency, inspects
+microservice logs, correlates findings across services, and delivers a final decision —
+Approve, Reject, or Review Required — complete with a detailed comment posted back to the PR.
 
----
-
----
-
-## v9 — Critical Fixes (Current)
-
-### Bug fixes in this release
-
-**1. Workflow now stops immediately when repository is inaccessible**
-
-Previously, `Repository tusker/shopflow not found or not accessible` was logged but the
-pipeline continued running all 18 agents. Now:
-- `repo_validator` failure → all subsequent agents are **skipped**
-- A clear `❌ Workflow Aborted` comment is posted on the PR with the exact failure reason
-- The workflow is marked `FAILED` in the database
-
-**2. False PASS results eliminated**
-
-Previously, agents reported `[PASS] All checks passed` even when there was no PR source
-available to test. This happened because agents fell back to the permanent demo-backend.
-Now:
-- Each agent emits a `MEDIUM` finding when it tests the demo app instead of PR code
-- The decision shows `FLAG` (not `PASS`) in this case
-- When a PR deployment (`deploy_url`) is available, agents test the actual PR code
-
-**3. Detailed error messages from repo_validator**
-
-Git clone errors, checkout failures, missing PRs, and token scope issues now include
-the actual error text so you can immediately see what to fix.
-
-See [docs/CHANGELOG.md](docs/CHANGELOG.md) for the full list.
+When the result is **Approve**, TuskerSquad can automatically merge the PR and trigger your
+deploy pipeline. When it is **Review Required**, a human approves or rejects from the live
+dashboard and can open the running ephemeral container in a browser to inspect it before
+deciding. Nothing ships until both the AI squad and the human agree it is safe.
 
 ---
 
+## Why TuskerSquad
 
-## ✨ What's New — Build, Deploy, Test & Runtime Analysis
-
-| Feature | How |
-|---|---|
-| **Automatic Build** | Builder agent clones PR code and builds Docker images |
-| **Ephemeral Deploy** | Deployer creates isolated containers for each PR |
-| **Automated Testing** | Tester runs API, performance, and health tests |
-| **Runtime Analysis** | Runtime Analyzer examines logs, performance, and behavior |
-| **Code + Runtime Validation** | Combined static analysis + live testing before approval |
-| **Auto-Merge on Approve** | Calls the Gitea Merge API immediately after human APPROVE |
-| **Merge style** | `merge` / `rebase` / `squash` — configurable per deployment |
-| **Auto-Deploy after Merge** | Dispatches a Gitea Actions `workflow_dispatch` event |
-| **PR Labels** | Sets `tuskersquad:approved` / `tuskersquad:rejected` / `tuskersquad:deployed` |
-| **Rich PR comment** | Posts QA summary, findings table, merge & deploy status back to the PR |
-| **Live merge/deploy status** | Dashboard polls and shows `Merging…` → `Merged` → `Deploy triggered` in real time |
-| **DB tracking** | `merge_status`, `deploy_status`, `deploy_url` stored per workflow |
+| Capability | TuskerSquad | GitHub Copilot | SonarQube | Manual Review |
+|------------|:-----------:|:--------------:|:---------:|:-------------:|
+| Ephemeral build & deploy per PR | ✅ | ❌ | ❌ | ❌ |
+| Live runtime security probes | ✅ | ❌ | ❌ | ❌ |
+| p95 latency / SRE analysis | ✅ | ❌ | ❌ | ❌ |
+| Cross-service log correlation | ✅ | ❌ | ❌ | ❌ |
+| 18 specialised AI agents | ✅ | Partial | ❌ | ❌ |
+| Customisable agents and models | ✅ | ❌ | Partial | ❌ |
+| Zero LLM API cost (local Ollama) | ✅ | ❌ | ❌ | N/A |
+| Open source — MIT licence | ✅ | ❌ | ❌ | N/A |
+| 100% self-hosted, no vendor lock-in | ✅ | ❌ | Partial | ✅ |
+| Air-gapped / offline operation | ✅ | ❌ | ❌ | N/A |
+| Multi-provider (Gitea / GitHub / GitLab) | ✅ | ❌ | Partial | ✅ |
+| Human-in-the-loop approval gate | ✅ | ❌ | ❌ | ✅ |
+| Auto-merge + deploy on approve | ✅ | ❌ | ❌ | ❌ |
+| Full LLM conversation audit trail | ✅ | ❌ | ❌ | N/A |
 
 ---
 
-## 🚀 Quick Start (5 minutes)
+## Three Unique Differentiators
 
-### Prerequisites
+### 1 — Zero AI Tooling Cost
 
-| Tool | Version | Install |
-|------|---------|---------|
-| Docker Desktop | ≥ 24.0 | https://docs.docker.com/get-docker/ |
-| Docker Compose v2 | ≥ 2.20 | Included with Docker Desktop |
-| Git | ≥ 2.40 | `brew install git` / `apt install git` |
-| Ollama (optional) | ≥ 0.3 | https://ollama.ai |
+TuskerSquad runs on Ollama — a free, open-source local LLM runtime. The models
+(qwen2.5:14b, deepseek-coder:6.7b, phi3:mini) are open-weight and downloaded once.
+The marginal cost of your thousandth PR review is the same as the first: electricity.
+Your source code never touches a cloud API. If Ollama is unreachable, a dashboard
+warning banner lists exactly which agents are affected and the commands to resolve it.
 
-Ports required: **3000, 5173, 5432, 8000, 8001, 8080, 8501**
+### 2 — Agents Structured Like Your Agile Team
 
-### 1. Clone & Configure
+Each agent maps to a real engineering role: Tech Lead (Planner), Backend Dev, AppSec,
+Site Reliability, CI/CD Pipeline (Builder+Deployer), QA Engineer, On-Call Engineer
+(Log Inspector), Senior Architect (Correlator), and Engineering Manager (Judge). The
+same review that takes 1-3 days in a sprint runs automatically in under 5 minutes.
 
-```bash
-git clone https://github.com/stonetusker/tuskersquad.git
-cd tuskersquad
+### 3 — Cross-Layer Root Cause Analysis
 
-# Create your .env from the example
-make env
-# → Edit infra/.env with your values
+The Correlator joins client-side HTTP probe findings with server-side structured log
+events, linked by correlation_id across microservices. The developer receives a
+three-sentence diagnosis: what the user sees, which service caused it, and how to fix it.
+
+---
+
+## The 18-Agent Pipeline
+
+Every PR triggers this pipeline automatically via LangGraph state management:
+
+```
+Repo Validator → Planner → Backend → Frontend → Security → SRE
+                               → Builder → Deployer → Tester → API Validator
+                               → Security Runtime → Runtime Analyser → Log Inspector
+                               → Correlator → Challenger → QA Lead → Judge
+                                    ├── APPROVE / REJECT → Cleanup → END
+                                    └── REVIEW_REQUIRED  → Human Approval
+                                                               → Cleanup → END (or Retest)
 ```
 
-### 2. (Optional) Pull LLM models
+The ephemeral container stays running while the human reviews it, and is only
+torn down after the human clicks Approve or Reject.
+
+| Agent | What it does |
+|-------|-------------|
+| Repo Validator | Confirms branch and PR exist and are accessible |
+| Planner | Scopes the review, analyses PR diff |
+| Backend Engineer | Runs pytest API tests against the deployed PR code |
+| Frontend Engineer | UI behaviour, form validation, accessibility checks |
+| Security Engineer | OWASP probes: auth bypass, SQLi, JWT manipulation, CORS |
+| SRE Engineer | p95 latency measurement, SLA breach detection |
+| Builder | Clones PR branch, builds Docker image in isolated workspace |
+| Deployer | Launches ephemeral container, exposes public URL for human review |
+| Tester | Executes automated test suite against the live PR container |
+| API Validator | Schema and contract validation |
+| Security Runtime | Live attack probes against the running container |
+| Runtime Analyser | CPU/memory profiling, log analysis while app runs |
+| Log Inspector | Reads structured /logs/events from every microservice |
+| Correlator | Joins client findings + server logs into root cause chains |
+| Challenger | Disputes findings affected by environment variance |
+| QA Lead | Synthesises all findings into an overall risk level |
+| Judge | Makes the final APPROVE / REJECT / REVIEW_REQUIRED decision |
+| Cleanup | Stops container, removes image, wipes workspace |
+
+---
+
+## Quick Start
+
+```bash
+# 1. Clone
+git clone https://github.com/stonetusker/tuskersquad
+cd tuskersquad
+
+# 2. Configure
+cp infra/.env.example infra/.env
+# Set DOCKER_HOST_IP to your machine IP so PR preview links work from a browser
+
+# 3. Start all services
+make up
+
+# 4. First-time Gitea setup
+make setup
+# Copy the GITEA_TOKEN from the output into infra/.env
+
+# 5. Apply token and restart
+make restart
+
+# 6. Open the dashboard
+open http://localhost:5173
+```
+
+Pull Ollama models for full AI (one-time download):
 
 ```bash
 ollama pull qwen2.5:14b
-ollama pull phi3:mini
 ollama pull deepseek-coder:6.7b
+ollama pull phi3:mini
 ```
 
-### 3. Start all services
+---
+
+## LLM Model Routing
+
+Only three agents call LLMs directly. All other agents are fully deterministic.
+
+| Agent(s) | Model | Role |
+|----------|-------|------|
+| Judge · Correlator · Security · SRE · Planner | qwen2.5:14b | Complex reasoning and decisions |
+| Backend Engineer · Frontend Engineer | deepseek-coder:6.7b | Code-native analysis |
+| QA Lead | phi3:mini | Fast concise risk summaries |
+
+Switch any model in `config/models.yaml` with no code changes needed.
+
+---
+
+## Ephemeral Container Access
+
+When a PR is deployed, the preview URL appears in both the PR comment and dashboard:
+
+```
+Ephemeral deployment successful — Preview: http://192.168.0.108:54321
+```
+
+The port is assigned automatically by the host OS (no collisions for concurrent reviews).
+The container stays running until the human reviewer decides.
+
+Set your machine IP in `infra/.env`:
 
 ```bash
-make fresh          # Clean build + start (recommended for first run)
-# or
-make up             # Build + start (keeps existing data)
+DOCKER_HOST_IP=192.168.0.108   # your LAN IP or hostname
 ```
 
-Wait ~45 seconds. Then verify:
+---
+
+## Services
+
+| Service | Port | Description |
+|---------|------|-------------|
+| react-frontend | 5173 | Vite + React workflow dashboard |
+| dashboard-bff | 8501 | FastAPI proxy for the React UI |
+| langgraph-api | 8000 | 18-agent orchestrator + REST API |
+| integration-service | 8001 | Webhook receiver (Gitea / GitHub / GitLab) |
+| gitea | 3000 | Self-hosted Git server |
+| postgres | 5432 | Workflow state, findings, LLM logs |
+| demo-backend | 8080 | ShopFlow demo e-commerce app |
+| catalog-service | 8081 | ShopFlow catalog microservice |
+| order-service | 8082 | ShopFlow order microservice |
+| user-service | 8083 | ShopFlow user microservice |
+
+---
+
+## Git Provider Setup
+
+**Gitea (default):** fully automatic via `make setup`.
+
+**GitHub:**
+1. Create a fine-grained PAT with `repo` and `pull_requests` scopes
+2. Set `GIT_PROVIDER=github`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET` in `infra/.env`
+3. Add webhook to your repo: `http://<host>:8001/github/webhook`
+4. Run `make restart`
+
+**GitLab:**
+1. Create a project access token with `api` scope
+2. Set `GIT_PROVIDER=gitlab`, `GITLAB_TOKEN`, `GITLAB_WEBHOOK_SECRET` in `infra/.env`
+3. Add webhook: `http://<host>:8001/gitlab/webhook`
+4. Run `make restart`
+
+---
+
+## Demo App — ShopFlow
+
+ShopFlow is the intentionally buggy e-commerce test target. Toggle bugs for demos:
+
+| Flag | Effect | Agent that detects it |
+|------|--------|----------------------|
+| BUG_PRICE=true | Checkout total inflated 35% | SRE, Correlator |
+| BUG_SECURITY=true | Auth bypass — invalid tokens accepted | Security Engineer |
+| BUG_SLOW=true | 3s artificial delay on checkout | SRE |
+| BUG_INVENTORY=true | Inflated stock count reported | Log Inspector |
+| BUG_JWT_NO_EXPIRY=true | JWTs issued with no expiry | Security Engineer |
+| BUG_WEAK_PASSWORD=true | Short passwords accepted | Security Engineer |
 
 ```bash
-make health
+make demo-security    # enable auth bypass bug
+make demo-pricing     # enable pricing bug
+make demo-latency     # enable latency bug
+make demo-all         # all bugs on
+make demo-clean       # all bugs off
 ```
 
-### 4. Open the dashboard
+Demo login: `test@example.com` / `password`
 
-```
-http://localhost:5173
-```
-
-### 5. Trigger your first workflow
+Running the test suite:
 
 ```bash
-make simulate
-# or directly:
-curl -X POST http://localhost:8001/webhook/simulate \
-     -H 'Content-Type: application/json' \
-     -d '{"repo":"tuskeradmin/demo-store","pr_number":42}'
+pytest tests/api/ -v
+# All 12 tests should pass with no bug flags active
 ```
 
 ---
 
-## 🔀 Enabling Auto-Merge
+## Dashboard Features
 
-Edit `infra/.env`:
-
-```env
-# Merge the PR automatically when human clicks Approve
-AUTO_MERGE_ON_APPROVE=true
-
-# How to merge (merge | rebase | squash)
-MERGE_STYLE=merge
-```
-
-A valid `GITEA_TOKEN` with write access to the repo is required.
+- **Ollama status banner** — visible when Ollama is unreachable or models are missing; auto-dismisses when fixed
+- **Relative timestamps** — workflow list shows "5 minutes ago", "Today 14:32" instead of raw time values
+- **Live workflow list** — all PR reviews with status and timing
+- **Agent timeline** — real-time view of each agent running
+- **Findings panel** — severity-sorted, with root cause chains from Correlator
+- **LLM reasoning** — full prompt and response for every AI call
+- **Diff viewer** — PR changes alongside agent comments
+- **Human approval** — Approve / Reject / Retest with live link to the running container
+- **Merge & deploy status** — polls in real time until merge and deploy complete
 
 ---
 
-## 🚀 Enabling Deploy on Merge
-
-1. Add a Gitea Actions workflow to your repository:
-
-   ```
-   your-repo/.gitea/workflows/deploy.yml
-   ```
-
-   Use the template at `.gitea/workflows/deploy.yml` in this repo as a starting point.
-   The workflow must have `on: workflow_dispatch`.
-
-2. Edit `infra/.env`:
-
-   ```env
-   DEPLOY_ON_MERGE=true
-   DEPLOY_BRANCH=main          # Branch to dispatch on
-   DEPLOY_PIPELINE=deploy      # Workflow filename without .yml
-   ```
-
-3. Restart the stack:
-
-   ```bash
-   make stop && make up
-   ```
-
-After the next human **Approve**, TuskerSquad will:
-1. Merge the PR
-2. Dispatch the `deploy.yml` workflow
-3. Post a `🚀 Deployment triggered` comment to the PR
-4. Label the PR `tuskersquad:deployed`
-5. Show live status in the dashboard
-
----
-
-## 🎬 Live Demo Scenarios
+## Makefile Reference
 
 ```bash
-# Scenario 1 — Security bug detected (EP01 video)
-make demo-security
-
-# Scenario 2 — Latency regression
-make demo-latency
-
-# Scenario 3 — Pricing bug
-make demo-pricing
-
-# Scenario 4 — All three bugs at once
-make demo-all
-
-# Reset to clean state
-make demo-clean && make fresh
+make up            # Build and start all services
+make down          # Stop containers (data preserved)
+make restart       # Recreate app services with updated .env
+make setup         # First-time Gitea initialisation
+make health        # Check all service health endpoints
+make logs          # Follow all service logs
+make build         # Force rebuild without cache
+make demo-security # Enable security bug
+make demo-pricing  # Enable pricing bug
+make demo-latency  # Enable latency bug
+make demo-all      # Enable all bugs
+make demo-clean    # Disable all bugs
 ```
 
 ---
 
-## 🏗 Architecture
+## Contributing
 
-```
-┌──────────────┐   webhook   ┌────────────────────┐
-│    Gitea     │ ──────────▶ │ Integration Service │ :8001
-│  (Git + CI)  │             └────────┬───────────┘
-└──────────────┘                      │ POST /api/workflow/start
-       ▲ PR comment                   ▼
-       │ + merge via API   ┌────────────────────┐
-       └───────────────────│   LangGraph API    │ :8000
-                           │                    │
-                           │  Planner           │
-                           │  ├─ Backend        │◀── Ollama LLMs
-                           │  ├─ Frontend       │    (host:11434)
-                           │  ├─ Security       │
-                           │  └─ SRE            │
-                           │  Challenger        │
-                           │  QA Lead           │
-                           │  Judge             │
-                           │  ↓                 │
-                           │  REVIEW_REQUIRED   │──▶ Human gate
-                           │  APPROVE ──────────│──▶ Auto-merge
-                           │                    │──▶ Auto-deploy
-                           └────────┬───────────┘
-                                    │ persist
-                                    ▼
-                           ┌────────────────────┐
-                           │    PostgreSQL 15    │ :5432
-                           └────────────────────┘
-                                    ▲
-                           ┌────────┴───────────┐
-                           │  Dashboard (BFF)    │ :8501
-                           └────────┬───────────┘
-                                    │
-                           ┌────────▼───────────┐
-                           │  React Frontend     │ :5173
-                           └────────────────────┘
-```
-
-### Service URLs
-
-| Service | URL | Purpose |
-|---------|-----|---------|
-| **Frontend Dashboard** | http://localhost:5173 | Main UI — show this in demos |
-| **LangGraph API docs** | http://localhost:8000/docs | REST API explorer |
-| **Demo App** | http://localhost:8080/docs | E-commerce test target |
-| **Gitea** | http://localhost:3000 | Git + PR + Actions |
-| **Integration Service** | http://localhost:8001/docs | Webhook receiver |
-| **Dashboard API** | http://localhost:8501/docs | BFF proxy |
+Open an issue before submitting a large pull request. Python 3.11+, black formatter.
 
 ---
 
-## ⚙️ Environment Variables
+## License
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GITEA_TOKEN` | — | Gitea personal access token (required for merge/deploy/comments) |
-| `OLLAMA_URL` | `http://host.docker.internal:11434` | Ollama LLM endpoint |
-| `AUTO_MERGE_ON_APPROVE` | `false` | Merge PR automatically on human APPROVE |
-| `MERGE_STYLE` | `merge` | `merge` / `rebase` / `squash` |
-| `DEPLOY_ON_MERGE` | `false` | Trigger Gitea Actions after merge |
-| `DEPLOY_BRANCH` | `main` | Branch to run deploy on |
-| `DEPLOY_PIPELINE` | `deploy` | Workflow filename (without `.yml`) |
-| `BUG_PRICE` | `false` | Inject pricing bug into demo app |
-| `BUG_SECURITY` | `false` | Inject auth bypass into demo app |
-| `BUG_SLOW` | `false` | Inject latency into demo app |
-| `JIRA_URL` | — | Jira instance URL |
-| `JIRA_TOKEN` | — | Jira API token |
-| `SLACK_WEBHOOK_URL` | — | Slack incoming webhook URL |
-| `LATENCY_THRESHOLD_MS` | `500` | SRE p95 threshold in ms |
+MIT — see [COPYRIGHT.md](COPYRIGHT.md).
 
----
-
-## 🔧 Makefile Commands
-
-```bash
-make fresh          # Clean slate build (use before demos)
-make up             # Start services (preserves data)
-make stop           # Stop services
-make clean          # Stop + delete all volumes
-make health         # Check all service health
-make logs           # Tail langgraph-api logs
-make logs-all       # Tail all logs
-make simulate       # Fire a test workflow
-make demo-security  # Enable security bug + fire workflow
-make demo-latency   # Enable latency bug + fire workflow
-make demo-pricing   # Enable pricing bug + fire workflow
-make demo-all       # All bugs + workflow
-make demo-clean     # Reset demo app to clean
-```
-
----
-
-## 🤖 Agent Model Assignments
-
-| Agent | Model | Role |
-|-------|-------|------|
-| Planner | qwen2.5:14b | Selects which agents run |
-| Backend | deepseek-coder:6.7b | pytest execution |
-| Frontend | deepseek-coder:6.7b | Playwright E2E |
-| Security | qwen2.5:14b | OWASP HTTP probes |
-| SRE | qwen2.5:14b | p50/p95/p99 latency |
-| Challenger | qwen2.5:14b | Finding disputes |
-| QA Lead | phi3:mini | Summary + risk rating |
-| Judge | qwen2.5:14b | APPROVE / REJECT / REVIEW_REQUIRED |
-
-Configure in `config/models.yaml`. All agents have deterministic fallbacks when Ollama is not running.
-
----
-
-## 🏢 Stonetusker Systems
-
-**TuskerSquad** is the flagship product of [Stonetusker Systems](https://stonetusker.com), positioning us as the leading **Agentic AI as a Service** provider for engineering governance.
-
-> *"We build the AI layer between your developers and production."*
+Copyright (c) 2025 Stonetusker Systems

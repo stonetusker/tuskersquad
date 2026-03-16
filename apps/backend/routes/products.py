@@ -45,23 +45,6 @@ def search_products(q: str = Query(..., description="Search query")):
     return {"query": q, "results": result, "count": len(result)}
 
 
-@router.get("/products/{product_id}")
-def get_product(product_id: int):
-    """Get single product by ID"""
-    db = SessionLocal()
-    product = db.query(Product).filter(Product.id == product_id).first()
-    db.close()
-
-    if not product:
-        return {"error": "Product not found"}, 404
-
-    return {
-        "id": product.id,
-        "name": product.name,
-        "price": product.price,
-    }
-
-
 @router.get("/products/recommendations")
 def get_recommendations(user_id: Optional[int] = None, limit: int = 5):
     """Get product recommendations"""
@@ -81,3 +64,21 @@ def get_recommendations(user_id: Optional[int] = None, limit: int = 5):
     ]
     db.close()
     return {"recommendations": result}
+
+@router.get("/products/{product_id}")
+def get_product(product_id: int):
+    """Get single product by ID"""
+    db = SessionLocal()
+    product = db.query(Product).filter(Product.id == product_id).first()
+    db.close()
+
+    if not product:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    return {
+        "id": product.id,
+        "name": product.name,
+        "price": product.price,
+    }
+
