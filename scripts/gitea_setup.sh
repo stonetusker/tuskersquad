@@ -50,6 +50,16 @@ upload_file() {
     LPATH="$2"
     MSG="$3"
 
+    # Guard: fail early and visibly if the source file does not exist.
+    # Without this, Python prints a traceback to stderr and B64 is set to an
+    # empty string. The curl then uploads an empty file, Gitea returns 201,
+    # and the script falsely logs "uploaded" for a missing file.
+    if [ ! -f "${LPATH}" ]; then
+        warn "upload skipped — source file not found: ${LPATH}"
+        warn "  Rebuild the gitea-setup image:  docker compose build gitea-setup && make setup"
+        return 1
+    fi
+
     B64=$(python3 -c "import base64,sys; sys.stdout.write(base64.b64encode(open('${LPATH}','rb').read()).decode())")
 
     EXISTING=$(curl -s -o /dev/null -w "%{http_code}" \

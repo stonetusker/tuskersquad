@@ -46,6 +46,10 @@ COPY apps/backend/routes/orders.py       apps/backend/routes/orders.py
 COPY apps/backend/routes/products.py     apps/backend/routes/products.py
 COPY apps/backend/routes/user.py         apps/backend/routes/user.py
 COPY apps/backend/static/index.html      apps/backend/static/index.html
+COPY apps/backend/tests/__init__.py      apps/backend/tests/__init__.py
+COPY apps/backend/tests/conftest.py      apps/backend/tests/conftest.py
+COPY apps/backend/tests/test_health.py   apps/backend/tests/test_health.py
+COPY apps/backend/tests/test_api.py      apps/backend/tests/test_api.py
 
 WORKDIR /
 CMD ["sh"]
