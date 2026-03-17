@@ -1,0 +1,90 @@
+diff --git a/apps/backend/main.py b/apps/backend/main.py
+index cc0be8d..d1b3c48 100644
+--- a/apps/backend/main.py
++++ b/apps/backend/main.py
+@@ -31,7 +31,7 @@ app = FastAPI(
+ 
+ app.add_middleware(
+     CORSMiddleware,
+-    allow_origins=["http://localhost:5173", "http://localhost:8080", "http://127.0.0.1:5173", "http://127.0.0.1:8080"],
++    allow_origins=["*"],
+     allow_methods=["*"],
+     allow_headers=["*"],
+ )
+diff --git a/apps/backend/routes/checkout.py b/apps/backend/routes/checkout.py
+index 25e44ba..1c623d7 100644
+--- a/apps/backend/routes/checkout.py
++++ b/apps/backend/routes/checkout.py
+@@ -1,4 +1,5 @@
+ import time
++import logging
+ 
+ from fastapi import APIRouter, Depends
+ 
+@@ -30,6 +31,8 @@ def checkout(
+ 
+     if BUG_SLOW:
+ 
++        logging.warning("checkout_slow_path_active: Adding 3 second artificial delay")
++
+         time.sleep(3)
+ 
+     db = SessionLocal()
+@@ -56,6 +59,8 @@ def checkout(
+ 
+     if BUG_PRICE:
+ 
++        logging.error("order_total_inflated: Prices inflated by BUG_PRICE flag")
++
+         total = total * 1.35
+ 
+     order = Order(
+diff --git a/apps/backend/routes/products.py b/apps/backend/routes/products.py
+index ab74b6c..4297a41 100644
+--- a/apps/backend/routes/products.py
++++ b/apps/backend/routes/products.py
+@@ -1,6 +1,8 @@
+ from fastapi import APIRouter, Query
+ from typing import List, Optional
+ import time
++import os
++import logging
+ 
+ from apps.backend.database import SessionLocal
+ from apps.backend.models import Product
+@@ -11,13 +13,17 @@ router = APIRouter()
+ 
+ @router.get("/products")
+ def get_products():
++    price_multiplier = 1.0
++    if os.getenv("BUG_PRICE") == "true":
++        price_multiplier = 1.35
++        logging.error("price_inflated_by_bug: Applying 1.35x multiplier to all product prices")
+     db = SessionLocal()
+     products = db.query(Product).all()
+     result = [
+         {
+             "id": p.id,
+             "name": p.name,
+-            "price": p.price,
++            "price": round(p.price * price_multiplier, 2),
+         }
+         for p in products
+     ]
+diff --git a/infra/docker-compose.yml b/infra/docker-compose.yml
+index 78b6083..98bb363 100644
+--- a/infra/docker-compose.yml
++++ b/infra/docker-compose.yml
+@@ -128,9 +128,9 @@ services:
+     container_name: tuskersquad-demo-backend
+     restart: unless-stopped
+     environment:
+-      BUG_PRICE:    "${BUG_PRICE:-false}"
+-      BUG_SECURITY: "${BUG_SECURITY:-false}"
+-      BUG_SLOW:     "${BUG_SLOW:-false}"
++      BUG_PRICE:    "true"
++      BUG_SECURITY: "true"
++      BUG_SLOW:     "true"
+     ports:
+       - "8080:8080"
+     networks:
