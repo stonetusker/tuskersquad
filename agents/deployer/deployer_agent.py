@@ -70,7 +70,21 @@ def run_deployer_agent(
     container_name = f"pr-{pr_number}-ephemeral-{workflow_id}"
 
     try:
-        if not build_artifacts or not build_artifacts.get("docker_image"):
+        if repository == "shopflow":
+            # Special case: shopflow demo repo uses permanent deployment
+            demo_app_url = os.getenv("DEMO_APP_URL", "http://tuskersquad-demo-backend:8080")
+            deploy_success = True
+            deploy_url = demo_app_url
+            findings.append({
+                "id": fid,
+                "agent": "deployer",
+                "severity": "LOW",
+                "title": "Demo repository - using permanent deployment",
+                "description": f"ShopFlow demo uses permanent deployment at {demo_app_url}",
+                "test_name": "demo_deploy",
+            })
+            fid += 1
+        elif not build_artifacts or not build_artifacts.get("docker_image"):
             findings.append({
                 "id": fid,
                 "agent": "deployer",

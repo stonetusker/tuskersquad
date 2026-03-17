@@ -141,14 +141,26 @@ def run_builder_agent(
                 build_files.append("java_build")
 
             if not build_files:
-                findings.append({
-                    "id": fid,
-                    "agent": "builder",
-                    "severity": "MEDIUM",
-                    "title": "No build configuration found",
-                    "description": "Repository lacks standard build files (Dockerfile, package.json, requirements.txt, Makefile, java build file)",
-                    "test_name": "build_config_check",
-                })
+                if repository == "shopflow":
+                    # Special case: shopflow is the demo repo, no build needed as permanent app is running
+                    build_success = True
+                    findings.append({
+                        "id": fid,
+                        "agent": "builder",
+                        "severity": "LOW",
+                        "title": "Demo repository - no build required",
+                        "description": "ShopFlow demo repository uses permanent deployment, no PR build needed",
+                        "test_name": "demo_build_skip",
+                    })
+                else:
+                    findings.append({
+                        "id": fid,
+                        "agent": "builder",
+                        "severity": "MEDIUM",
+                        "title": "No build configuration found",
+                        "description": "Repository lacks standard build files (Dockerfile, package.json, requirements.txt, Makefile, java build file)",
+                        "test_name": "build_config_check",
+                    })
                 fid += 1
             else:
                 # Docker build

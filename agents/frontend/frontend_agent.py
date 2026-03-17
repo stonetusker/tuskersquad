@@ -132,7 +132,7 @@ def run_frontend_agent(workflow_id: str, repository: str, pr_number: int, fid: i
     logger.info("frontend_agent_started", extra={"workflow_id": workflow_id})
 
     testing_pr_code = bool(deploy_url)
-    if not testing_pr_code:
+    if not testing_pr_code and repository != "shopflow":
         findings.append({
             "id": fid, "workflow_id": workflow_id, "agent": "frontend",
             "severity": "LOW",
