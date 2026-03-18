@@ -222,6 +222,19 @@ class GitHubProvider(GitProvider):
         except Exception:
             return False
 
+    def remove_label(self, owner_repo: str, pr_number: int, label: str) -> bool:
+        if not self._token():
+            return False
+        try:
+            with httpx.Client(timeout=8) as c:
+                r = c.delete(
+                    self._api(f"/repos/{owner_repo}/issues/{pr_number}/labels/{label}"),
+                    headers=self._headers(),
+                )
+                return r.status_code in (200, 204)
+        except Exception:
+            return False
+
     # ── Commit status ─────────────────────────────────────────────────────────
 
     def post_commit_status(self, owner_repo: str, sha: str,

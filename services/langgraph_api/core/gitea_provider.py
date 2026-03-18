@@ -120,6 +120,10 @@ class GiteaProvider(GitProvider):
         from .gitea_client import set_pr_label
         return set_pr_label(owner_repo, pr_number, label)
 
+    def remove_label(self, owner_repo: str, pr_number: int, label: str) -> bool:
+        from .gitea_client import remove_pr_label
+        return remove_pr_label(owner_repo, pr_number, label)
+
     # ── Merge ─────────────────────────────────────────────────────────────────
 
     def merge_pr(self, owner_repo: str, pr_number: int,

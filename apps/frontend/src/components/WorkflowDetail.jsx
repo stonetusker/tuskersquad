@@ -218,25 +218,27 @@ export default function WorkflowDetail({ workflowId }) {
           {isWaiting && <span className="badge badge-yellow" style={{ fontSize: 10 }}>AWAITING DECISION</span>}
         </div>
         <div className="gov-bar-body">
-          <div className="action-row">
-            <button className="btn btn-approve" disabled={anyBusy}
-              onClick={() => doAction(() => api.approveWorkflow(workflowId), 'Approved')}
-              title="Approve — triggers auto-merge if enabled">
-              ✓ Approve
-            </button>
-            <button className="btn btn-reject" disabled={anyBusy}
-              onClick={() => doAction(() => api.rejectWorkflow(workflowId), 'Rejected')}>
-              ✗ Reject
-            </button>
-            <button className="btn btn-retest" disabled={anyBusy}
-              onClick={() => doAction(() => api.retestWorkflow(workflowId), 'Retest queued')}>
-              ↺ Retest
-            </button>
-            <button className="btn btn-release" disabled={anyBusy}
-              onClick={() => setShowRelease(v => !v)}>
-              Override
-            </button>
-          </div>
+          {isWaiting && (
+            <div className="action-row">
+              <button className="btn btn-approve" disabled={anyBusy}
+                onClick={() => doAction(() => api.approveWorkflow(workflowId), 'Approved')}
+                title="Approve — triggers auto-merge if enabled">
+                ✓ Approve
+              </button>
+              <button className="btn btn-reject" disabled={anyBusy}
+                onClick={() => doAction(() => api.rejectWorkflow(workflowId), 'Rejected')}>
+                ✗ Reject
+              </button>
+              <button className="btn btn-retest" disabled={anyBusy}
+                onClick={() => doAction(() => api.retestWorkflow(workflowId), 'Retest queued')}>
+                ↺ Retest
+              </button>
+              <button className="btn btn-release" disabled={anyBusy}
+                onClick={() => setShowRelease(v => !v)}>
+                Override
+              </button>
+            </div>
+          )}
 
           {isWaiting && (
             <div className="hint-bar">

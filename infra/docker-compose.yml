@@ -120,7 +120,7 @@ services:
       - tuskersquad-net
 
 
-  # ShopFlow demo app - legacy monolith kept for compatibility
+  # ShopFlow demo app - uses code from merged repository
   demo-backend:
     build:
       context: ..
@@ -131,6 +131,8 @@ services:
       BUG_PRICE:    "${BUG_PRICE:-false}"
       BUG_SECURITY: "${BUG_SECURITY:-false}"
       BUG_SLOW:     "${BUG_SLOW:-false}"
+      GITEA_URL:    "http://tuskersquad-gitea:3000"
+      GITEA_TOKEN:  "${GITEA_TOKEN:-}"
     ports:
       - "8080:8080"
     networks:
@@ -138,9 +140,12 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=4)\""]
       interval: 10s
-      timeout: 6s
+      timeout: 5s
       retries: 6
       start_period: 30s
+    depends_on:
+      gitea:
+        condition: service_healthy
 
 
   # ShopFlow v2 - Catalog Microservice (port 8081)

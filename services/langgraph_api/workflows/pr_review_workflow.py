@@ -13,6 +13,10 @@ import time
 from typing import Any, Dict, Optional
 
 
+def _flag(env_var: str) -> bool:
+    return os.getenv(env_var, "false").lower() in ("true", "1", "yes")
+
+
 def _run_async(coro):
     """Run a coroutine safely from a background thread."""
     try:
@@ -492,6 +496,27 @@ def resume_workflow_with_decision(workflow_id: str, decision: str, reason: str =
                                  result.get("rationale", ""),
                                  result.get("qa_summary", ""),
                                  result.get("risk_level", "LOW"))
+
+                # Start merge/deploy thread if APPROVE and auto-merge enabled
+                if final == "APPROVE" and _flag("AUTO_MERGE_ON_APPROVE"):
+                    wf = wf_repo.get_workflow(workflow_id)
+                    if wf and wf.repository and wf.pr_number:
+                        findings = [{"agent": f.agent, "title": f.title, "severity": f.severity,
+                                     "description": f.description} for f in f_repo.list_by_workflow(workflow_id)]
+                        qa = qa_repo.get_by_workflow(workflow_id)
+                        reg = result  # Use the result as registry data
+                        import threading
+                        from ..api.workflow_routes import _run_merge_and_deploy
+                        threading.Thread(
+                            target=_run_merge_and_deploy,
+                            args=(workflow_id, wf.repository, wf.pr_number, findings,
+                                  qa.summary if qa else "",
+                                  qa.risk_level if qa else "",
+                                  reg.get("rationale", ""),
+                                  reg.get("agent_decisions", {}),
+                                  False, "Human approval"),
+                            daemon=True,
+                        ).start()
         finally:
             db.close()
     except Exception:
