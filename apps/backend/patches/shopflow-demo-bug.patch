@@ -1,0 +1,101 @@
+From 54a50781147017ffd08e9f1bf87f6f16f1d7d04b Mon Sep 17 00:00:00 2001
+From: Subeesh Sivanandan <contact@stonetusker.com>
+Date: Tue, 17 Mar 2026 19:56:32 +0530
+Subject: [PATCH] Introduced bugs for Demo
+
+---
+ Dockerfile                      | 3 +++
+ apps/backend/main.py            | 2 +-
+ apps/backend/routes/checkout.py | 5 +++++
+ apps/backend/routes/products.py | 8 +++++++-
+ 4 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/Dockerfile b/Dockerfile
+index 748d9bd..aebeca4 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -8,5 +8,8 @@ RUN pip install --no-cache-dir -r /tmp/demo-requirements.txt
+ RUN pip install --no-cache-dir pytest pytest-asyncio httpx anyio
+ COPY apps/ /app/apps/
+ ENV PYTHONPATH=/app
++ENV BUG_PRICE="true"
++ENV BUG_SECURITY="true"
++ENV BUG_SLOW="true"
+ HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=4)"
+ CMD ["uvicorn", "apps.backend.main:app", "--host", "0.0.0.0", "--port", "8080"]
+diff --git a/apps/backend/main.py b/apps/backend/main.py
+index cc0be8d..d1b3c48 100644
+--- a/apps/backend/main.py
++++ b/apps/backend/main.py
+@@ -31,7 +31,7 @@ app = FastAPI(
+ 
+ app.add_middleware(
+     CORSMiddleware,
+-    allow_origins=["http://localhost:5173", "http://localhost:8080", "http://127.0.0.1:5173", "http://127.0.0.1:8080"],
++    allow_origins=["*"],
+     allow_methods=["*"],
+     allow_headers=["*"],
+ )
+diff --git a/apps/backend/routes/checkout.py b/apps/backend/routes/checkout.py
+index 25e44ba..1c623d7 100644
+--- a/apps/backend/routes/checkout.py
++++ b/apps/backend/routes/checkout.py
+@@ -1,4 +1,5 @@
+ import time
++import logging
+ 
+ from fastapi import APIRouter, Depends
+ 
+@@ -30,6 +31,8 @@ def checkout(
+ 
+     if BUG_SLOW:
+ 
++        logging.warning("checkout_slow_path_active: Adding 3 second artificial delay")
++
+         time.sleep(3)
+ 
+     db = SessionLocal()
+@@ -56,6 +59,8 @@ def checkout(
+ 
+     if BUG_PRICE:
+ 
++        logging.error("order_total_inflated: Prices inflated by BUG_PRICE flag")
++
+         total = total * 1.35
+ 
+     order = Order(
+diff --git a/apps/backend/routes/products.py b/apps/backend/routes/products.py
+index ab74b6c..4297a41 100644
+--- a/apps/backend/routes/products.py
++++ b/apps/backend/routes/products.py
+@@ -1,6 +1,8 @@
+ from fastapi import APIRouter, Query
+ from typing import List, Optional
+ import time
++import os
++import logging
+ 
+ from apps.backend.database import SessionLocal
+ from apps.backend.models import Product
+@@ -11,13 +13,17 @@ router = APIRouter()
+ 
+ @router.get("/products")
+ def get_products():
++    price_multiplier = 1.0
++    if os.getenv("BUG_PRICE") == "true":
++        price_multiplier = 1.35
++        logging.error("price_inflated_by_bug: Applying 1.35x multiplier to all product prices")
+     db = SessionLocal()
+     products = db.query(Product).all()
+     result = [
+         {
+             "id": p.id,
+             "name": p.name,
+-            "price": p.price,
++            "price": round(p.price * price_multiplier, 2),
+         }
+         for p in products
+     ]
+-- 
+2.50.1 (Apple Git-155)
+
