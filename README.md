@@ -17,27 +17,6 @@ deciding. Nothing ships until both the AI squad and the human agree it is safe.
 
 ---
 
-## Why TuskerSquad
-
-| Capability | TuskerSquad | GitHub Copilot | SonarQube | Manual Review |
-|------------|:-----------:|:--------------:|:---------:|:-------------:|
-| Ephemeral build & deploy per PR | ✅ | ❌ | ❌ | ❌ |
-| Live runtime security probes | ✅ | ❌ | ❌ | ❌ |
-| p95 latency / SRE analysis | ✅ | ❌ | ❌ | ❌ |
-| Cross-service log correlation | ✅ | ❌ | ❌ | ❌ |
-| 18 specialised AI agents | ✅ | Partial | ❌ | ❌ |
-| Customisable agents and models | ✅ | ❌ | Partial | ❌ |
-| Zero LLM API cost (local Ollama) | ✅ | ❌ | ❌ | N/A |
-| Open source — MIT licence | ✅ | ❌ | ❌ | N/A |
-| 100% self-hosted, no vendor lock-in | ✅ | ❌ | Partial | ✅ |
-| Air-gapped / offline operation | ✅ | ❌ | ❌ | N/A |
-| Multi-provider (Gitea / GitHub / GitLab) | ✅ | ❌ | Partial | ✅ |
-| Human-in-the-loop approval gate | ✅ | ❌ | ❌ | ✅ |
-| Auto-merge + deploy on approve | ✅ | ❌ | ❌ | ❌ |
-| Full LLM conversation audit trail | ✅ | ❌ | ❌ | N/A |
-
----
-
 ## Three Unique Differentiators
 
 ### 1 — Zero AI Tooling Cost

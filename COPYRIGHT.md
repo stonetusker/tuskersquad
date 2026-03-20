@@ -94,6 +94,7 @@ you agree that your contribution will be licensed under MIT.
 
 ## Contact
 
-Stonetusker Systems
-hello@stonetusker.io
-https://stonetusker.io
+Stonetusker Systems Private Limited
+contact@stonetusker.com
+https://stonetusker.com
+
