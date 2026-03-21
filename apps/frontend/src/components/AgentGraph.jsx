@@ -6,77 +6,27 @@
 import React, { useMemo } from 'react'
 
 const AGENTS = [
-  // Repository validation
-  { id: 'repo_validator', label: 'Repo Validator', icon: 'RV', x: 200, y: 10 },
-
-  // Planning phase
-  { id: 'planner', label: 'Planner', icon: 'PL', x: 200, y: 70 },
-
-  // Client-side testing
-  { id: 'backend', label: 'Backend', icon: 'BE', x: 50, y: 130 },
-  { id: 'frontend', label: 'Frontend', icon: 'FE', x: 200, y: 130 },
-  { id: 'security', label: 'Security', icon: 'SEC', x: 350, y: 130 },
-  { id: 'sre', label: 'SRE', icon: 'SRE', x: 200, y: 190 },
-
-  // Build & Deploy
-  { id: 'builder', label: 'Builder', icon: 'BLD', x: 50, y: 250 },
-  { id: 'deployer', label: 'Deployer', icon: 'DEP', x: 200, y: 250 },
-  { id: 'tester', label: 'Tester', icon: 'TST', x: 350, y: 250 },
-
-  // Runtime validation
-  { id: 'api_validator', label: 'API Validator', icon: 'API', x: 50, y: 310 },
-  { id: 'security_runtime', label: 'Security Runtime', icon: 'SEC-R', x: 200, y: 310 },
-  { id: 'runtime_analyzer', label: 'Runtime Analyzer', icon: 'RNA', x: 350, y: 310 },
-
-  // Log analysis & correlation
-  { id: 'log_inspector', label: 'Log Inspector', icon: 'LOG', x: 125, y: 370 },
-  { id: 'correlator', label: 'Correlator', icon: 'COR', x: 275, y: 370 },
-
-  // Review & decision
-  { id: 'challenger', label: 'Challenger', icon: 'CH', x: 125, y: 430 },
-  { id: 'qa_lead', label: 'QA Lead', icon: 'QA', x: 200, y: 490 },
-  { id: 'judge', label: 'Judge', icon: 'JDG', x: 200, y: 550 },
-
-  // Human interaction & cleanup
-  { id: 'human_approval', label: 'Human Approval', icon: 'HUM', x: 350, y: 550 },
-  { id: 'cleanup', label: 'Cleanup', icon: 'CLN', x: 200, y: 610 },
+  { id: 'planner',    label: 'Planner',    icon: 'PL', x: 130, y: 20  },
+  { id: 'backend',    label: 'Backend',    icon: 'BE',  x: 20,  y: 90  },
+  { id: 'frontend',   label: 'Frontend',   icon: 'FE',  x: 130, y: 90  },
+  { id: 'security',   label: 'Security',   icon: 'SEC',  x: 240, y: 90  },
+  { id: 'sre',        label: 'SRE',        icon: 'SRE',  x: 350, y: 90  },
+  { id: 'challenger', label: 'Challenger', icon: 'CH',  x: 185, y: 160 },
+  { id: 'qa_lead',    label: 'QA Lead',    icon: 'QA',  x: 185, y: 230 },
+  { id: 'judge',      label: 'Judge',      icon: 'JDG',  x: 185, y: 300 },
 ]
 
 const EDGES = [
-  // Initial validation
-  ['repo_validator', 'planner'],
-
-  // Sequential client-side testing
   ['planner', 'backend'],
-  ['backend', 'frontend'],
-  ['frontend', 'security'],
-  ['security', 'sre'],
-
-  // Build & deploy sequence
-  ['sre', 'builder'],
-  ['builder', 'deployer'],
-  ['deployer', 'tester'],
-
-  // Runtime validation sequence
-  ['tester', 'api_validator'],
-  ['api_validator', 'security_runtime'],
-  ['security_runtime', 'runtime_analyzer'],
-
-  // Log analysis & correlation
-  ['runtime_analyzer', 'log_inspector'],
-  ['log_inspector', 'correlator'],
-
-  // Review & decision
-  ['correlator', 'challenger'],
+  ['planner', 'frontend'],
+  ['planner', 'security'],
+  ['planner', 'sre'],
+  ['backend',    'challenger'],
+  ['frontend',   'challenger'],
+  ['security',   'challenger'],
+  ['sre',        'challenger'],
   ['challenger', 'qa_lead'],
-  ['qa_lead', 'judge'],
-
-  // Judge outcomes
-  ['judge', 'human_approval'],
-  ['judge', 'cleanup'],
-
-  // Human approval to cleanup
-  ['human_approval', 'cleanup'],
+  ['qa_lead',    'judge'],
 ]
 
 const NODE_W = 88
@@ -115,8 +65,8 @@ export default function AgentGraph({ agents, currentAgent }) {
   return (
     <div style={{ width: '100%', overflowX: 'auto' }}>
       <svg
-        viewBox="0 0 450 650"
-        style={{ width: '100%', maxWidth: 450, display: 'block', margin: '0 auto' }}
+        viewBox="0 0 460 345"
+        style={{ width: '100%', maxWidth: 460, display: 'block', margin: '0 auto' }}
       >
         <defs>
           <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">

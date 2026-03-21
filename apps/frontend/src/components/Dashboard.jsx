@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import ControlPanel from './ControlPanel'
 import WorkflowList from './WorkflowList'
 import WorkflowDetail from './WorkflowDetail'
-import OllamaBanner from './OllamaBanner'
 
 export default function Dashboard() {
   const [selected, setSelected] = useState(null)
@@ -10,7 +9,6 @@ export default function Dashboard() {
   return (
     <div className="dashboard-root">
       <div className="dashboard-left">
-        <OllamaBanner />
         <ControlPanel onStarted={(wf) => wf?.workflow_id && setSelected(wf.workflow_id)} />
         <WorkflowList onSelect={setSelected} selectedId={selected} />
       </div>

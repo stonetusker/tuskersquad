@@ -41,7 +41,6 @@ const api = {
 
   // ── NEW: LLM conversation log ───────────────────────────────────────
   getLLMLogs:        (id) => request(`/api/ui/workflow/${id}/llm-logs`),
-  ollamaStatus:      ()  => request('/api/ui/ollama-status'),
 
   // ── NEW: Per-agent decision summaries ──────────────────────────────
   getAgentDecisions: (id) => request(`/api/ui/workflow/${id}/agent-decisions`),

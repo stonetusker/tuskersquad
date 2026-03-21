@@ -100,9 +100,6 @@ class GitProvider(ABC):
     def set_label(self, owner_repo: str, pr_number: int, label: str) -> bool: ...
 
     @abstractmethod
-    def remove_label(self, owner_repo: str, pr_number: int, label: str) -> bool: ...
-
-    @abstractmethod
     def merge_pr(self, owner_repo: str, pr_number: int,
                  merge_style: str = "merge", message: str = "") -> dict: ...
 

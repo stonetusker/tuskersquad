@@ -227,29 +227,6 @@ class GitLabProvider(GitProvider):
         except Exception:
             return False
 
-    def remove_label(self, owner_repo: str, pr_number: int, label: str) -> bool:
-        if not self._token():
-            return False
-        pid = self._project_id(owner_repo)
-        try:
-            with httpx.Client(timeout=8) as c:
-                # Get current labels first
-                r = c.get(self._api(f"/projects/{pid}/merge_requests/{pr_number}"),
-                          headers=self._headers())
-                if r.status_code != 200:
-                    return False
-                current = r.json().get("labels", [])
-                if label in current:
-                    current.remove(label)
-                r2 = c.put(
-                    self._api(f"/projects/{pid}/merge_requests/{pr_number}"),
-                    headers=self._headers(),
-                    json={"labels": ",".join(current)},
-                )
-                return r2.status_code in (200, 201)
-        except Exception:
-            return False
-
     # ── Merge ─────────────────────────────────────────────────────────────────
 
     def merge_pr(self, owner_repo: str, pr_number: int,

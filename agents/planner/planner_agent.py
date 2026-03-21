@@ -20,22 +20,9 @@ def run_planner_agent(
 ) -> Dict[str, Any]:
     """
     Synchronous planner agent — returns the pipeline plan.
-    Includes build, deploy, test, and runtime analysis agents for comprehensive PR validation.
+    All 4 engineering agents always run for maximum coverage.
     """
     start = datetime.utcnow()
-    findings = []
-    if repository == "shopflow":
-        findings.append({
-            "id": fid,
-            "workflow_id": workflow_id,
-            "agent": "planner",
-            "severity": "LOW",
-            "title": "Demo repository - low risk assessment",
-            "description": "ShopFlow demo repository changes are low risk",
-            "test_name": "risk_assessment",
-            "created_at": datetime.utcnow().isoformat(),
-        })
-        fid += 1
     log = {
         "agent": "planner",
         "status": "COMPLETED",
@@ -44,13 +31,8 @@ def run_planner_agent(
     }
     logger.info("planner_complete workflow=%s repo=%s pr=%d", workflow_id, repository, pr_number)
     return {
-        "plan": [
-            "backend", "frontend", "security", "sre",
-            "builder", "deployer", "tester", "runtime_analyzer",
-            "log_inspector", "correlator", "challenger", "qa_lead", "judge"
-        ],
-        "findings": findings,
+        "plan": ["backend", "frontend", "security", "sre"],
+        "findings": [],
         "agent_log": log,
         "fid": fid,
-        "risk_level": "LOW" if repository == "shopflow" else None,
     }

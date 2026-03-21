@@ -1,4 +1,3 @@
-import { formatDateTime, fullTooltip } from '../utils/time'
 import { useState, useEffect, useRef } from 'react'
 import api from '../api'
 
@@ -110,7 +109,7 @@ export default function LLMLogsViewer({ workflowId }) {
                   }}>{log.error || log.response || '(no response)'}</pre>
                 </div>
                 <div style={{marginTop:'0.4rem',fontSize:'0.7rem',color:'#4B5563'}}>
-                  {log.created_at && <span title={fullTooltip(log.created_at)}>{formatDateTime(log.created_at)}</span>}
+                  {log.created_at && new Date(log.created_at).toLocaleString()}
                 </div>
               </div>
             )}

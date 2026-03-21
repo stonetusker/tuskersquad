@@ -1,9 +1,9 @@
 # ── TuskerSquad: ShopFlow Demo Backend ────────────────────────────────────────
 FROM python:3.11-slim
 
-# Install git and other build dependencies
+# gcc + libffi-dev needed to compile bcrypt / cryptography C extensions
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libffi-dev git \
+ && apt-get install -y --no-install-recommends gcc libffi-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -15,50 +15,14 @@ RUN pip install --no-cache-dir --upgrade pip==24.3.1
 COPY apps/backend/requirements.txt /tmp/demo-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/demo-requirements.txt
 
-# 3. Copy source files as fallback (will be replaced at runtime)
+# 3. Copy source files needed at runtime
+#    apps/__init__.py is required so Python can resolve "apps.backend.*" imports
 COPY apps/__init__.py /app/apps/__init__.py
 COPY apps/backend/    /app/apps/backend/
-
-# 4. Create runtime update script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-echo "Updating demo app with latest Shopflow code..."\n\
-if [ -n "$GITEA_TOKEN" ] && [ -n "$GITEA_URL" ]; then\n\
-  echo "Cloning from repository..."\n\
-  # Backup original files\n\
-  mkdir -p /tmp/backup\n\
-  cp -r /app/apps /tmp/backup/ 2>/dev/null || true\n\
-  \n\
-  # Clone latest code\n\
-  rm -rf /tmp/shopflow\n\
-  if git clone http://$GITEA_TOKEN@${GITEA_URL#http://}/tusker/shopflow.git /tmp/shopflow 2>/dev/null; then\n\
-    echo "Successfully cloned repository"\n\
-    # Replace with cloned code\n\
-    rm -rf /app/apps\n\
-    cp -r /tmp/shopflow/apps /app/\n\
-    rm -rf /tmp/shopflow\n\
-    echo "Demo app updated with latest code"\n\
-  else\n\
-    echo "Failed to clone repository, using built-in code"\n\
-    cp -r /tmp/backup/apps /app/ 2>/dev/null || true\n\
-  fi\n\
-else\n\
-  echo "No Gitea credentials provided, using built-in code"\n\
-fi\n\
-' > /app/update_code.sh && chmod +x /app/update_code.sh
-
-# 5. Create startup script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-echo "Starting ShopFlow Demo Backend..."\n\
-/app/update_code.sh\n\
-echo "Starting uvicorn server..."\n\
-exec uvicorn apps.backend.main:app --host 0.0.0.0 --port 8080\n\
-' > /app/start.sh && chmod +x /app/start.sh
 
 ENV PYTHONPATH=/app
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
   CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=4)"
 
-CMD ["/app/start.sh"]
+CMD ["uvicorn", "apps.backend.main:app", "--host", "0.0.0.0", "--port", "8080"]

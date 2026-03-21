@@ -1,54 +1,31 @@
-# --------------------------------------------------------
-#  TuskerSquad - Makefile
+# ════════════════════════════════════════════════════════
+#  TuskerSquad — Makefile
 #  Run from the project root directory.
-# --------------------------------------------------------
+# ════════════════════════════════════════════════════════
 
 COMPOSE = docker compose -f infra/docker-compose.yml --env-file infra/.env
 
 .PHONY: up down restart build logs logs-api logs-dash logs-frontend \
-        health ps env setup \
+        health ps env \
         demo-security demo-pricing demo-latency demo-all demo-clean
 
-# -- Lifecycle ---------------------------------------------------------
+# ── Lifecycle ─────────────────────────────────────────────────────────
 up:
-	@[ -f infra/.env ] || (echo "infra/.env not found - copying from .env.example" && cp infra/.env.example infra/.env)
+	@[ -f infra/.env ] || (echo "⚠  infra/.env not found — copying from .env.example" && cp infra/.env.example infra/.env)
 	$(COMPOSE) up --build -d
 	@echo ""
-	@echo "TuskerSquad is running:"
-	@echo "  UI       http://localhost:5173"
-	@echo "  Demo App http://localhost:8080"
-	@echo "  Gitea    http://localhost:3000"
-	@echo "  API Docs http://localhost:8000/docs"
-	@echo ""
-	@echo "Webhook is auto-registered by the gitea-setup container."
-	@echo "Add GITEA_TOKEN to infra/.env then run: make restart"
-
-# restart: recreates application services so they pick up any .env changes
-# (e.g. a new GITEA_TOKEN). Uses `up -d` not `docker compose restart` because
-# `docker compose restart` only bounces the process — it does NOT re-read infra/.env
-# or re-inject environment variables. `up -d` recreates the container with fresh env.
-# Gitea and gitea-setup are intentionally excluded.
-restart:
-	$(COMPOSE) up -d --no-build \
-	    postgres langgraph-api integration-service dashboard frontend \
-	    demo-backend catalog-service order-service user-service
-	@echo ""
-	@echo "Services restarted with updated infra/.env (Gitea untouched)."
-	@echo "  UI       http://localhost:5173"
-	@echo "  API Docs http://localhost:8000/docs"
-
-# setup: first-time Gitea initialisation OR recovery after `make down -v`.
-# Run this ONLY when the shopflow repo is missing from Gitea.
-# It will create the repo, register the webhook, upload all source files,
-# and print a fresh GITEA_TOKEN to copy into infra/.env.
-setup:
-	@echo "Re-running Gitea setup (creates repo + uploads source if missing)..."
-	$(COMPOSE) rm -f gitea-setup 2>/dev/null || true
-	$(COMPOSE) up --build -d gitea-setup
-	@echo "Done. Check logs: docker logs tuskersquad-gitea-setup"
+	@echo "  ✅  TuskerSquad is running"
+	@echo "  ────────────────────────────────────────────"
+	@echo "  🎨  UI          http://localhost:5173"
+	@echo "  🛒  Demo App    http://localhost:8080"
+	@echo "  📡  Gitea       http://localhost:3000"
+	@echo "  📖  API Docs    http://localhost:8000/docs"
+	@echo "  ────────────────────────────────────────────"
 
 down:
 	$(COMPOSE) down
+
+restart: down up
 
 build:
 	$(COMPOSE) build --no-cache
@@ -68,9 +45,9 @@ logs-frontend:
 ps:
 	$(COMPOSE) ps
 
-# -- Health check ------------------------------------------------------
+# ── Health check ──────────────────────────────────────────────────────
 health:
-	@echo "-- Checking service health ----------------------"
+	@echo "── Checking service health ──────────────────────"
 	@curl -sf http://localhost:8000/api/health | python3 -m json.tool | head -3 \
 	  && echo "  langgraph-api  ✅" || echo "  langgraph-api  ❌"
 	@curl -sf http://localhost:8501/health    | python3 -m json.tool | head -3 \
@@ -81,11 +58,11 @@ health:
 	  && echo "  demo-backend   ✅" || echo "  demo-backend   ❌"
 
 env:
-	@echo "-- Current infra/.env ---------------------------"
+	@echo "── Current infra/.env ───────────────────────────"
 	@grep -v '^#' infra/.env 2>/dev/null | grep -v '^$$' \
 	  | sed 's/\(PASSWORD\|TOKEN\|SECRET\)=.*/\1=***/'
 
-# -- Demo bug shortcuts ------------------------------------------------
+# ── Demo bug shortcuts ────────────────────────────────────────────────
 demo-security:
 	$(COMPOSE) stop demo-backend
 	BUG_SECURITY=true $(COMPOSE) up -d demo-backend

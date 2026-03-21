@@ -7,7 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 
 Base = declarative_base()
 
@@ -24,10 +24,6 @@ class WorkflowRun(Base):
     merge_sha     = Column(String, nullable=True)
     deploy_status = Column(String, nullable=True)   # pending | triggered | failed | skipped
     deploy_url    = Column(String, nullable=True)
-    container_name = Column(String, nullable=True)
-    workspace_dir  = Column(String, nullable=True)
-    # store analysis_results (logs, metrics etc) for later inspection
-    analysis_results = Column(JSONB, nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

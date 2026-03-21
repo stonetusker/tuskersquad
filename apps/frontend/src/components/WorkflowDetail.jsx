@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { formatDateTime, formatRelative, fullTooltip } from '../utils/time'
 import api from '../api'
 import FindingsList from './FindingsList'
 import AgentsTimeline from './AgentsTimeline'
@@ -181,7 +180,7 @@ export default function WorkflowDetail({ workflowId }) {
             <span className="detail-pr"> PR #{detail.pr_number}</span>
           </div>
           <div className="detail-time">
-            {detail.created_at ? <span title={fullTooltip(detail.created_at)}>{formatDateTime(detail.created_at)}</span> : ''}
+            {detail.created_at ? new Date(detail.created_at).toLocaleString() : ''}
           </div>
         </div>
         <StatusBadge status={detail.status} />
@@ -218,27 +217,25 @@ export default function WorkflowDetail({ workflowId }) {
           {isWaiting && <span className="badge badge-yellow" style={{ fontSize: 10 }}>AWAITING DECISION</span>}
         </div>
         <div className="gov-bar-body">
-          {isWaiting && (
-            <div className="action-row">
-              <button className="btn btn-approve" disabled={anyBusy}
-                onClick={() => doAction(() => api.approveWorkflow(workflowId), 'Approved')}
-                title="Approve — triggers auto-merge if enabled">
-                ✓ Approve
-              </button>
-              <button className="btn btn-reject" disabled={anyBusy}
-                onClick={() => doAction(() => api.rejectWorkflow(workflowId), 'Rejected')}>
-                ✗ Reject
-              </button>
-              <button className="btn btn-retest" disabled={anyBusy}
-                onClick={() => doAction(() => api.retestWorkflow(workflowId), 'Retest queued')}>
-                ↺ Retest
-              </button>
-              <button className="btn btn-release" disabled={anyBusy}
-                onClick={() => setShowRelease(v => !v)}>
-                Override
-              </button>
-            </div>
-          )}
+          <div className="action-row">
+            <button className="btn btn-approve" disabled={anyBusy}
+              onClick={() => doAction(() => api.approveWorkflow(workflowId), 'Approved')}
+              title="Approve — triggers auto-merge if enabled">
+              ✓ Approve
+            </button>
+            <button className="btn btn-reject" disabled={anyBusy}
+              onClick={() => doAction(() => api.rejectWorkflow(workflowId), 'Rejected')}>
+              ✗ Reject
+            </button>
+            <button className="btn btn-retest" disabled={anyBusy}
+              onClick={() => doAction(() => api.retestWorkflow(workflowId), 'Retest queued')}>
+              ↺ Retest
+            </button>
+            <button className="btn btn-release" disabled={anyBusy}
+              onClick={() => setShowRelease(v => !v)}>
+              Override
+            </button>
+          </div>
 
           {isWaiting && (
             <div className="hint-bar">
@@ -384,7 +381,7 @@ export default function WorkflowDetail({ workflowId }) {
                    : <span style={{ color: '#94a3b8' }}>—</span>}
                   </td>
                   <td style={{ color: '#94a3b8' }}>
-                    {a.created_at ? <span title={fullTooltip(a.created_at)}>{formatDateTime(a.created_at)}</span> : '—'}
+                    {a.created_at ? new Date(a.created_at).toLocaleString() : '—'}
                   </td>
                 </tr>
               ))}

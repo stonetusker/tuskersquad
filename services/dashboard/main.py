@@ -66,35 +66,6 @@ def health():
     return {"status": "ok", "service": "dashboard-bff"}
 
 
-@app.get("/api/ui/ollama-status")
-async def ollama_status():
-    """
-    Probe Ollama and return availability + loaded models.
-    The frontend polls this every 15 s to show/hide the LLM warning banner.
-    Response: { available, models, url, error }
-    """
-    ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
-    try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            r = await client.get(f"{ollama_url}/api/tags")
-            r.raise_for_status()
-            data = r.json()
-            model_names = [m.get("name", "") for m in data.get("models", [])]
-            return {
-                "available": True,
-                "models": model_names,
-                "url": ollama_url,
-                "error": None,
-            }
-    except Exception as exc:
-        return {
-            "available": False,
-            "models": [],
-            "url": ollama_url,
-            "error": str(exc)[:200],
-        }
-
-
 # ── Workflow list ─────────────────────────────────────────────────────────────
 
 @app.get("/api/ui/workflows")

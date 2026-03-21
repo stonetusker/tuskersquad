@@ -13,10 +13,6 @@ import time
 from typing import Any, Dict, Optional
 
 
-def _flag(env_var: str) -> bool:
-    return os.getenv(env_var, "false").lower() in ("true", "1", "yes")
-
-
 def _run_async(coro):
     """Run a coroutine safely from a background thread."""
     try:
@@ -63,27 +59,19 @@ def get_graph():
     return _graph
 
 
-# Agent decision narrative generator
+# ── Agent decision narrative generator ────────────────────────────────────────
 
 _AGENT_TEST_DESCRIPTIONS = {
-    "repo_validator":    "Verified repository and PR exist and are accessible; checked out PR commit",
-    "planner":           "Analysed PR scope, identified risk indicators and planned review strategy",
-    "backend":           "Tested API endpoints - checkout totals, latency, error rates, pricing logic",
-    "frontend":          "Tested UI flows, form validation, accessibility, cart behaviour",
-    "security":          "Probed authentication, JWT validation, injection vectors, auth bypass",
-    "sre":               "Load tested checkout endpoint, measured P95 latency and throughput",
-    "builder":           "Built application from PR source code in isolated environment",
-    "deployer":          "Deployed built application to ephemeral container environment",
-    "tester":            "Executed automated tests and API checks against deployed application",
-    "api_validator":     "Validated REST API endpoints for correct status codes and response format",
-    "security_runtime":  "Scanned container image for vulnerabilities using Trivy",
-    "runtime_analyzer":  "Analyzed runtime behavior, container logs, CPU/memory usage and test results",
-    "log_inspector":     "Read structured logs from all microservices - identified server-side errors and cross-service failure chains",
-    "correlator":        "Correlated client-side findings with server-side log events - produced root cause chains and developer brief",
-    "challenger":        "Audited peer agent findings for false positives and environment variance",
-    "qa_lead":           "Synthesised all findings into risk assessment and standup summary",
-    "judge":             "Made final deployment decision based on all evidence",
-    "cleanup":           "Removed ephemeral containers, Docker images, and workspace directories",
+    "planner":       "Analysed PR scope, identified risk indicators and planned review strategy",
+    "backend":       "Tested API endpoints — checkout totals, latency, error rates, pricing logic",
+    "frontend":      "Tested UI flows, form validation, accessibility, cart behaviour",
+    "security":      "Probed authentication, JWT validation, injection vectors, auth bypass",
+    "sre":           "Load tested checkout endpoint, measured P95 latency and throughput",
+    "log_inspector": "Read structured logs from all microservices — identified server-side errors and cross-service failure chains",
+    "correlator":    "Correlated client-side findings with server-side log events — produced root cause chains and developer brief",
+    "challenger":    "Audited peer agent findings for false positives and environment variance",
+    "qa_lead":       "Synthesised all findings into risk assessment and standup summary",
+    "judge":         "Made final deployment decision based on all evidence",
 }
 
 
@@ -119,10 +107,20 @@ def _derive_agent_decision_summary(agent: str, findings: list, challenges: list)
             "across client-side findings and server-side log events. "
             + ("; ".join(f.get("title", "")[:60] for f in chains[:2]) if chains else "No cross-layer correlations found.")
         )
-    elif agent in ("qa_lead", "judge"):
-        decision   = "REVIEW_REQUIRED"
+    elif agent == "qa_lead":
+        # Derive qa_lead decision from actual risk level, not hardcode
+        high_count = sum(1 for f in my_findings if f.get("severity") == "HIGH")
+        med_count  = sum(1 for f in my_findings if f.get("severity") == "MEDIUM")
+        if high_count > 0 or med_count > 1:
+            decision = "FLAG"
+        else:
+            decision = "PASS"
         test_count = len(findings)
-        summary    = _AGENT_TEST_DESCRIPTIONS[agent]
+        summary    = _AGENT_TEST_DESCRIPTIONS.get("qa_lead", "QA synthesis complete.")
+    elif agent == "judge":
+        decision   = "REVIEW_REQUIRED"   # overridden below with actual result
+        test_count = len(findings)
+        summary    = _AGENT_TEST_DESCRIPTIONS.get("judge", "")
     elif my_findings:
         high_count = sum(1 for f in my_findings if f.get("severity") == "HIGH")
         decision   = "FLAG"
@@ -135,16 +133,7 @@ def _derive_agent_decision_summary(agent: str, findings: list, challenges: list)
     else:
         decision   = "PASS"
         test_count = 3
-        # Don't say "All checks passed" when agent ran against demo app, not PR code
-        cov_warnings = [f for f in my_findings if f.get("test_name") == "pr_coverage_warning"]
-        if cov_warnings:
-            decision   = "FLAG"
-            test_count = len(cov_warnings)
-            summary    = cov_warnings[0].get("description", "")[:400]
-        elif not my_findings:
-            summary = f"{_AGENT_TEST_DESCRIPTIONS.get(agent, 'Tests completed.')} - All checks passed."
-        else:
-            summary = f"{_AGENT_TEST_DESCRIPTIONS.get(agent, 'Tests completed.')} - All checks passed."
+        summary    = f"{_AGENT_TEST_DESCRIPTIONS.get(agent, 'Tests completed.')} — All checks passed."
 
     risk = (
         "HIGH"   if any(f.get("severity") == "HIGH"   for f in my_findings) else
@@ -162,7 +151,7 @@ def _persist_results(
 ):
     """Persist graph output to PostgreSQL. Returns (id_map, agent_decisions)."""
 
-    # Agent logs - save output text too
+    # Agent logs — save output text too
     for log in result.get("agent_logs", []):
         agent_name = log.get("agent")
         try:
@@ -202,14 +191,6 @@ def _persist_results(
         except Exception:
             logger.exception("failed_to_save_qa_summary")
 
-    # Persist analysis results if provided (log anomalies, metrics etc)
-    analysis = result.get("analysis_results")
-    if analysis is not None:
-        try:
-            workflow_repo.update_analysis_results(workflow_id, analysis)
-        except Exception:
-            logger.exception("failed_to_save_analysis_results")
-
     # Challenges
     for ch in result.get("challenges", []):
         try:
@@ -230,9 +211,7 @@ def _persist_results(
     # Per-agent decision summaries
     findings   = result.get("findings",   [])
     challenges = result.get("challenges", [])
-    agents     = ["repo_validator", "planner", "backend", "frontend", "security", "sre",
-                   "builder", "deployer", "tester", "api_validator", "security_runtime",
-                   "runtime_analyzer", "log_inspector", "correlator", "challenger", "qa_lead", "judge", "cleanup"]
+    agents     = ["planner", "backend", "frontend", "security", "sre", "challenger", "qa_lead", "judge"]
     agent_decisions: Dict[str, dict] = {}
 
     for agent in agents:
@@ -242,7 +221,13 @@ def _persist_results(
             if agent == "qa_lead" and qa_summary:
                 ad["summary"]    = qa_summary[:500]
                 ad["risk_level"] = risk_level
-                ad["decision"]   = "REVIEW_REQUIRED" if risk_level == "HIGH" else "PASS"
+                # Show APPROVE when clean (no HIGH/MEDIUM), FLAG when issues found
+                if risk_level == "HIGH":
+                    ad["decision"] = "FLAG"
+                elif risk_level == "MEDIUM":
+                    ad["decision"] = "FLAG"
+                else:
+                    ad["decision"] = "PASS"
             if agent == "judge":
                 gd = result.get("decision", "REVIEW_REQUIRED")
                 ad["decision"] = gd
@@ -304,15 +289,16 @@ def execute_workflow(workflow_id: str) -> None:
             })
 
         # Wire LLM client's DB callback so every LLM call is persisted.
-        # IMPORTANT: callback opens its OWN session. Never share the execute_workflow
-        # session across threads because SQLAlchemy sessions are not thread-safe.
+        # IMPORTANT: callback opens its OWN session — never share the execute_workflow
+        # session across threads (SQLAlchemy sessions are not thread-safe).
         try:
             from core.llm_client import get_llm_client
             _llm_instance = get_llm_client()
             _wf_id_for_log = workflow_id  # capture in local var, not as default arg
             def _db_log(**kwargs):
-                # Always use the captured workflow_id for this run.
-                # Drop any workflow_id from kwargs so it does not override the closure.
+                # Ignore any workflow_id passed via kwargs — always use the
+                # captured workflow id for THIS run. If generate() passes
+                # workflow_id=None it would otherwise override the closure default.
                 kwargs.pop("workflow_id", None)
                 try:
                     _cb_db = SessionLocal()
@@ -350,41 +336,6 @@ def execute_workflow(workflow_id: str) -> None:
         logger.info("graph_invoke_done workflow=%s provider=%s duration=%.2fs",
                     workflow_id, git_provider, time.time() - t0)
 
-        # ── Early-exit: repository/PR validation failed ───────────────────────
-        # When the repo_validator rejects, LangGraph routes directly to END
-        # (skipping all other agents). The decision field is blank in this case,
-        # so we detect it by reading validator_failed from the final state.
-        if result.get("validator_failed"):
-            findings    = result.get("findings", [])
-            reject_desc = "; ".join(
-                f.get("description", f.get("title", ""))
-                for f in findings if f.get("agent") == "repo_validator"
-            ) or "Repository or PR could not be accessed."
-            rationale  = f"Workflow aborted: {reject_desc}"
-            risk_level = "HIGH"
-            
-            # Update DB status first (source of truth)
-            wf_repo.update_workflow_status(workflow_id, "FAILED")
-            try:
-                gov_repo.create_decision(workflow_id, "REJECT")
-                db.commit()
-            except Exception:
-                logger.exception("governance_write_failed workflow=%s", workflow_id)
-            
-            # Then update registry to match DB
-            _update_registry(workflow_id, "FAILED", rationale, "", risk_level,
-                             extra={
-                                 "decision": "REJECT",
-                                 "rationale": rationale,
-                                 "risk_level": risk_level,
-                             })
-            
-            # Post a clear REJECT comment on the PR
-            _post_validation_failure_comment(workflow_id, findings, rationale)
-            logger.error("workflow_aborted_validator_failed workflow=%s reason=%s status=FAILED (DB+Registry updated)",
-                         workflow_id, reject_desc)
-            return
-
         id_map, agent_decisions = _persist_results(
             db, workflow_id, result,
             wf_repo, f_repo, gov_repo, al_repo, ch_repo, qa_repo, ad_repo,
@@ -396,17 +347,11 @@ def execute_workflow(workflow_id: str) -> None:
         risk_level = result.get("risk_level", "LOW")
         diff_context = result.get("diff_context", {})
 
-        # Store important state in registry for UI (including metrics)
+        # Store agent_decisions and diff_context in registry for UI
         _update_registry(workflow_id, "RUNNING", rationale, qa_summary, risk_level,
                          extra={
                              "agent_decisions": agent_decisions,
                              "git_provider": git_provider,
-                             "analysis_results": result.get("analysis_results", {}),
-                             "deploy_url": result.get("deploy_url"),
-                             "public_url": result.get("public_url", ""),
-                             "host_port": result.get("host_port", 0),
-                             "container_name": result.get("container_name"),
-                             "workspace_dir": result.get("workspace_dir"),
                              "diff_context": {
                                  k: v for k, v in diff_context.items()
                                  if k != "_changed_lines_by_file"  # too large for registry
@@ -427,17 +372,16 @@ def execute_workflow(workflow_id: str) -> None:
         if decision in ("APPROVE", "REJECT"):
             wf_repo.update_workflow_status(workflow_id, "COMPLETED")
             _update_registry(workflow_id, "COMPLETED", rationale, qa_summary, risk_level)
-            logger.info("workflow_completed workflow=%s decision=%s status=COMPLETED (DB+Registry updated)", workflow_id, decision)
-            # Agent comments are already posted live inside each graph node.
-            # Post only the final summary comment here.
-            _post_final_summary(workflow_id, result, qa_summary, risk_level)
+            logger.info("auto_decision workflow=%s decision=%s", workflow_id, decision)
+            _post_agent_pr_comments(workflow_id, agent_decisions)
+            _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_decisions)
             return
 
         wf_repo.update_workflow_status(workflow_id, "WAITING_HUMAN_APPROVAL")
         _update_registry(workflow_id, "WAITING_HUMAN_APPROVAL", rationale, qa_summary, risk_level,
                          extra={"agent_decisions": agent_decisions})
-        # Agent comments already posted live. Post the final summary comment now.
-        _post_final_summary(workflow_id, result, qa_summary, risk_level)
+        _post_agent_pr_comments(workflow_id, agent_decisions)
+        _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_decisions)
 
     except Exception:
         logger.exception("execute_workflow_failed workflow=%s", workflow_id)
@@ -476,15 +420,6 @@ def resume_workflow_with_decision(workflow_id: str, decision: str, reason: str =
             if decision.upper() == "RETEST":
                 _persist_results(db, workflow_id, result, wf_repo, f_repo, gov_repo,
                                  al_repo, ch_repo, qa_repo, ad_repo)
-                # also update registry with any new analysis results
-                try:
-                    _update_registry(workflow_id, "RUNNING", result.get("rationale", ""),
-                                     result.get("qa_summary", ""), result.get("risk_level", "LOW"),
-                                     extra={
-                                         "analysis_results": result.get("analysis_results", {}),
-                                     })
-                except Exception:
-                    pass
 
             final = result.get("human_decision", decision).upper()
             if final in ("APPROVE", "REJECT"):
@@ -496,27 +431,6 @@ def resume_workflow_with_decision(workflow_id: str, decision: str, reason: str =
                                  result.get("rationale", ""),
                                  result.get("qa_summary", ""),
                                  result.get("risk_level", "LOW"))
-
-                # Start merge/deploy thread if APPROVE and auto-merge enabled
-                if final == "APPROVE" and _flag("AUTO_MERGE_ON_APPROVE"):
-                    wf = wf_repo.get_workflow(workflow_id)
-                    if wf and wf.repository and wf.pr_number:
-                        findings = [{"agent": f.agent, "title": f.title, "severity": f.severity,
-                                     "description": f.description} for f in f_repo.list_by_workflow(workflow_id)]
-                        qa = qa_repo.get_by_workflow(workflow_id)
-                        reg = result  # Use the result as registry data
-                        import threading
-                        from ..api.workflow_routes import _run_merge_and_deploy
-                        threading.Thread(
-                            target=_run_merge_and_deploy,
-                            args=(workflow_id, wf.repository, wf.pr_number, findings,
-                                  qa.summary if qa else "",
-                                  qa.risk_level if qa else "",
-                                  reg.get("rationale", ""),
-                                  reg.get("agent_decisions", {}),
-                                  False, "Human approval"),
-                            daemon=True,
-                        ).start()
         finally:
             db.close()
     except Exception:
@@ -534,124 +448,10 @@ _PIPELINE_ORDER = ["planner", "backend", "frontend", "security",
                    "sre", "challenger", "qa_lead", "judge"]
 
 
-def _post_validation_failure_comment(workflow_id: str, findings: list, rationale: str) -> None:
-    """Post a clear REJECT comment to the PR when repository/PR validation fails.
-    This is critical because validator_failed means all subsequent agents are skipped,
-    so no other comment would be posted.
-    """
-    db = SessionLocal()
-    try:
-        wf = WorkflowRepository(db).get_workflow(workflow_id)
-        if not (wf and wf.repository and wf.pr_number):
-            logger.warning("validation_failure_comment_skip: no repo/pr for %s", workflow_id)
-            return
-
-        lines = [
-            "## ❌ TuskerSquad — Workflow Aborted: Validation Failed",
-            "",
-            "> **Repository or PR could not be accessed.** All subsequent agents have been skipped.",
-            "",
-            "### Validation Findings",
-            "",
-        ]
-        for f in findings:
-            sev  = f.get("severity", "HIGH")
-            si   = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(sev, "🔴")
-            title = f.get("title", "Validation error")
-            desc  = f.get("description", "")[:300]
-            lines.append(f"- {si} **{title}**")
-            if desc:
-                lines.append(f"  {desc}")
-
-        lines += [
-            "",
-            "### What to check",
-            "",
-            "1. The repository name in the webhook payload matches an existing Gitea repo.",
-            "2. The `GITEA_TOKEN` in `infra/.env` has `repository` and `issue` read/write scopes.",
-            "3. The PR number exists and the PR branch can be cloned.",
-            "4. The Gitea container is healthy: `docker ps | grep gitea`",
-            "",
-            f"> Rationale: {rationale[:400]}",
-            "",
-            "---",
-            "*TuskerSquad — Workflow ID: " + str(workflow_id) + "*",
-        ]
-
-        body = "\n".join(lines)
-        post_pr_comment_sync(wf.repository, wf.pr_number, body)
-        logger.info("validation_failure_comment_posted workflow=%s repo=%s pr=%s",
-                    workflow_id, wf.repository, wf.pr_number)
-    except Exception:
-        logger.exception("post_validation_failure_comment_failed workflow=%s", workflow_id)
-    finally:
-        db.close()
-
-
-def _post_final_summary(workflow_id, result, qa_summary, risk_level):
-    """Post the final consolidated review summary to the PR.
-
-    This runs after all agents have finished. Each individual agent comment
-    was already posted live inside the graph node as it completed.
-    This final comment gives the developer a single rolled-up view with
-    the overall decision, risk level, and developer brief.
-    """
-    db = SessionLocal()
-    try:
-        wf = WorkflowRepository(db).get_workflow(workflow_id)
-        if not (wf and wf.repository and wf.pr_number):
-            logger.warning("post_final_summary_skip: workflow %s has no repo/pr", workflow_id)
-            return
-
-        rows = FindingsRepository(db).list_by_workflow(workflow_id)
-        payload = [
-            {"agent": f.agent, "title": f.title, "severity": f.severity, "description": f.description}
-            for f in rows
-        ]
-
-        # agent_decisions built from what was persisted to DB
-        agents = ["repo_validator", "planner", "backend", "frontend", "security", "sre",
-                  "builder", "deployer", "tester", "api_validator", "security_runtime",
-                  "runtime_analyzer", "log_inspector", "correlator", "challenger", "qa_lead", "judge", "cleanup"]
-        findings_list = result.get("findings", [])
-        challenges_list = result.get("challenges", [])
-        agent_decisions = {}
-        for agent in agents:
-            try:
-                ad = _derive_agent_decision_summary(agent, findings_list, challenges_list)
-                if agent == "qa_lead" and qa_summary:
-                    ad["summary"] = qa_summary[:500]
-                    ad["risk_level"] = risk_level
-                if agent == "judge":
-                    ad["decision"] = result.get("decision", "REVIEW_REQUIRED")
-                    ad["summary"] = result.get("rationale", "")[:500] or ad["summary"]
-                agent_decisions[agent] = ad
-            except Exception:
-                pass
-
-        developer_brief = result.get("developer_brief", "")
-        body = build_initial_review_comment(
-            workflow_id=str(workflow_id),
-            decision=result.get("decision", "UNKNOWN"),
-            findings=payload,
-            qa_summary=qa_summary,
-            risk_level=risk_level,
-            rationale=result.get("rationale", ""),
-            agent_decisions=agent_decisions,
-            developer_brief=developer_brief,
-        )
-        post_pr_comment_sync(wf.repository, wf.pr_number, body)
-        logger.info("final_summary_posted workflow=%s repo=%s pr=%s", workflow_id, wf.repository, wf.pr_number)
-    except Exception:
-        logger.exception("post_final_summary_failed workflow=%s", workflow_id)
-    finally:
-        db.close()
-
-
 def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
     """
     Post one PR comment per agent after the pipeline completes.
-    Opens its own DB session. Safe to call from any thread.
+    Opens its own DB session — safe to call from any thread.
     """
     db = SessionLocal()
     try:
@@ -676,7 +476,7 @@ def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
             my_f     = findings_by_agent.get(agent, [])
 
             lines = [
-                f"### {agent.replace('_', ' ').title()} [{di}]  Risk: {ri if ri else risk}",
+                f"### {agent.replace('_', ' ').title()} — {di}  Risk: {ri if ri else risk}",
                 "",
             ]
             if summary:
@@ -690,11 +490,11 @@ def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
                     sev  = finding.severity or "LOW"
                     si   = _SEV_ICON.get(sev, sev)
                     desc = (finding.description or "")[:140]
-                    lines.append(f"- **{si if si else sev}** {finding.title} - {desc}")
+                    lines.append(f"- **{si if si else sev}** {finding.title} — {desc}")
                 if len(my_f) > 6:
                     lines.append(f"- *(+ {len(my_f) - 6} more findings)*")
             else:
-                lines.append(f"**Tests run:** {tests} | **Findings:** 0 - All checks passed.")
+                lines.append(f"**Tests run:** {tests} · **Findings:** 0 — All checks passed.")
 
             lines += ["", "---", "*TuskerSquad*"]
             body = "\n".join(lines)
@@ -719,7 +519,7 @@ def _post_initial_pr_comment(workflow_id, result, qa_summary, risk_level, agent_
         payload = [{"agent": f.agent, "title": f.title, "severity": f.severity,
                     "description": f.description} for f in rows]
 
-        # developer_brief is produced by the correlator agent
+        # developer_brief comes from the correlator agent's cross-layer RCA
         developer_brief = result.get("developer_brief", "")
 
         body = build_initial_review_comment(

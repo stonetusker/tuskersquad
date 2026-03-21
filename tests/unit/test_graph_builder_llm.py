@@ -47,10 +47,7 @@ def test_simple_graph_produces_agent_logs():
     result = g.invoke({"workflow_id": "test-sg-3", "repository": "owner/repo", "pr_number": 3})
 
     agent_names = [log["agent"] for log in result["agent_logs"]]
-    expected = [
-        "planner", "backend", "frontend", "security", "sre",
-        "log_inspector", "correlator", "challenger", "qa_lead", "judge"
-    ]
+    expected = ["planner", "backend", "frontend", "security", "sre", "challenger", "qa_lead", "judge"]
     assert agent_names == expected, f"Agent order mismatch: {agent_names}"
 
 

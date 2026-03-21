@@ -11,10 +11,9 @@ def test_build_comment_body():
     ]
 
     body = build_comment_body("wf-123", "APPROVE", findings)
-    # new format uses markdown header and includes decision and workflow id
-    assert "###" in body
-    assert "APPROVE" in body
-    assert "workflow `wf-123`" in body
+    assert "TuskerSquad governance decision: APPROVE" in body
+    assert "[backend] sql issue (HIGH)" in body
+    assert "Workflow: wf-123" in body
 
 def test_post_pr_comment_sync_success(monkeypatch):
     # set env vars
@@ -28,7 +27,6 @@ def test_post_pr_comment_sync_success(monkeypatch):
     class FakeResp:
         def __init__(self, status=201, json_data=None):
             self._status = status
-            self.status_code = status
             self._json = json_data or {}
 
         def raise_for_status(self):

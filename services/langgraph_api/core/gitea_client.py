@@ -376,40 +376,6 @@ def set_pr_label(owner_repo: str, pr_number: int, label_name: str) -> bool:
         return False
 
 
-def remove_pr_label(owner_repo: str, pr_number: int, label_name: str) -> bool:
-    url, token = _get_config()
-    if not url or not token:
-        return False
-    # First get the label ID
-    label_id = None
-    list_url = f"{url}/api/v1/repos/{owner_repo}/labels"
-    try:
-        with httpx.Client(timeout=8.0) as client:
-            r = client.get(list_url, headers=_headers(token))
-            r.raise_for_status()
-            for lbl in r.json():
-                if lbl.get("name") == label_name:
-                    label_id = lbl["id"]
-                    break
-    except Exception:
-        logger.exception("find_label_failed repo=%s label=%s", owner_repo, label_name)
-        return False
-    
-    if not label_id:
-        # Label doesn't exist, consider it successfully removed
-        return True
-    
-    # Remove the label from the PR
-    endpoint = f"{url}/api/v1/repos/{owner_repo}/issues/{pr_number}/labels/{label_id}"
-    try:
-        with httpx.Client(timeout=8.0) as client:
-            r = client.delete(endpoint, headers=_headers(token))
-            return r.status_code in (200, 204)
-    except Exception:
-        logger.exception("remove_pr_label_failed")
-        return False
-
-
 # ─── Commit status ────────────────────────────────────────────────────────────
 
 def post_commit_status(owner_repo, sha, state, description) -> bool:

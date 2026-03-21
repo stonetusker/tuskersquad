@@ -1,5 +1,4 @@
 import React, { useState } from 'react'
-import { formatRelative, fullTooltip } from '../utils/time'
 
 const SEV_LABEL = { HIGH: 'HIGH', MEDIUM: 'MED', LOW: 'LOW' }
 
@@ -72,7 +71,7 @@ export default function FindingsList({ findings }) {
                 <span>{f.agent}</span>
                 {f.created_at && (
                   <span style={{ marginLeft: 'auto', color: '#d1d5db' }}>
-                    <span title={fullTooltip(f.created_at)}>{formatRelative(f.created_at)}</span>
+                    {new Date(f.created_at).toLocaleTimeString()}
                   </span>
                 )}
               </div>
