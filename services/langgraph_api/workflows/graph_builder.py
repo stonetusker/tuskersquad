@@ -1,53 +1,22 @@
 """
 TuskerSquad Graph Builder
-=========================
-Builds the LangGraph StateGraph for multi-agent PR review.
 
-Graph topology  (full-stack multi-service review)
--------------------------------------------------
+Builds the LangGraph StateGraph for the multi-agent PR review pipeline.
 
-  START
-    │
-    ▼
-  planner_node
-    │
-    ├──────────────────────────────────────────────────────────┐
-    ▼                                                          ▼
-  backend_node   ←─ tests API endpoints                  log_inspector_node  ←─ reads /logs/events
-  frontend_node  ←─ tests UI flows                            │                   from all 3 microservices
-  security_node  ←─ probes auth / injection                   │               posts to CorrelationBus
-  sre_node       ←─ latency / load tests                      │
-    │   (all post observations to CorrelationBus)             │
-    └──────────────────────────┬──────────────────────────────┘
-                               ▼
-                         correlator_node     ←─ joins client + server observations
-                               │                identifies root cause chains
-                               ▼                produces developer_brief
-                         challenger_node     ←─ challenges environment-variance findings
-                               │
-                               ▼
-                         qa_lead_node        ←─ synthesises all findings + RCA
-                               │
-                               ▼
-                         judge_node
-                               │
-                    ├── "APPROVE"  ──────────── END
-                    ├── "REJECT"   ──────────── END
-                    └── "REVIEW_REQUIRED" ──▶  human_approval_node  (interrupt)
-                                                      │
-                                                      ├── human_decision == "APPROVE" ─▶ END
-                                                      ├── human_decision == "REJECT"  ─▶ END
-                                                      └── human_decision == "RETEST"  ─▶ planner_node
+Pipeline order:
+  planner -> backend -> frontend -> security -> sre
+          -> log_inspector -> correlator -> challenger -> qa_lead -> judge
+          -> APPROVE/REJECT (auto) or REVIEW_REQUIRED (human gate)
 
-CorrelationBus: shared list on state (bus_observations).
-  Each agent appends its own observations; later agents read all prior observations.
-  This models the real-world QA scenario where client testers and server log
-  inspectors communicate findings before forming a root cause hypothesis.
+Each node posts a PR comment immediately when it finishes so the developer
+sees results as they come in rather than waiting for the whole pipeline.
 
-LangGraph is imported at call time so the module can be imported safely
-in environments where langgraph is not yet installed.  If the import
-fails, ``build_graph()`` returns a ``SimpleGraph`` fallback that
-replicates the same behaviour without LangGraph.
+CorrelationBus (bus_observations on state): each agent appends its own
+observations; later agents read all prior observations. This lets the
+correlator join client-side test results with server-side log events.
+
+LangGraph is imported lazily so the module loads safely even if langgraph
+is not installed. Falls back to SimpleGraph in that case.
 """
 
 from __future__ import annotations
@@ -69,12 +38,9 @@ logger = logging.getLogger("langgraph.graph_builder")
 
 
 def _run_async(coro):
-    """
-    Run a coroutine safely from any thread context.
-    Background threads (execute_workflow) never have a running event loop,
-    so asyncio.run() always works there. This helper also handles the rare
-    case where someone calls a node function from an async context.
-    """
+    """Run a coroutine from any thread. Background threads never have an
+    event loop so asyncio.run() works fine there. The ThreadPoolExecutor
+    path handles the uncommon case where the caller is already in async."""
     try:
         loop = asyncio.get_event_loop()
         if loop.is_closed():
@@ -88,9 +54,7 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
-# ---------------------------------------------------------------------------
-# Helper: import agent runner with graceful fallback
-# ---------------------------------------------------------------------------
+# Import an agent runner module, returning None if the import fails
 
 def _import_runner(module_path: str, fn_name: str):
     try:
@@ -162,7 +126,11 @@ def _post_agent_comment_now(
             for f in my_findings[:6]:
                 sev  = f.get("severity", "LOW")
                 stag = _SEV_TAG.get(sev, sev)
-                desc = (f.get("description") or "")[:140]
+                # Raise limit so deployer/builder descriptions with URLs fit.
+                # The finding title already carries the public_url for deployer,
+                # but keep description useful too.
+                desc_limit = 280 if f.get("agent") in ("deployer", "builder") else 140
+                desc = (f.get("description") or "")[:desc_limit]
                 rel  = f.get("diff_relevance", "")
                 rel_note = f" *(diff: {rel})*" if rel and rel not in ("unknown", "systemic") else ""
                 lines.append(f"- **{stag if stag else sev}** {f.get('title','?')} -- {desc}{rel_note}")
@@ -180,9 +148,7 @@ def _post_agent_comment_now(
         logger.exception("agent_comment_failed agent=%s -- pipeline continues", agent)
 
 
-# ---------------------------------------------------------------------------
-# Helper: LLM finding or synthetic fallback
-# ---------------------------------------------------------------------------
+# Try to get a finding from the LLM; return a synthetic one if that fails
 
 def _llm_finding_or_synthetic(
     agent: str,
@@ -257,19 +223,73 @@ def _llm_finding_or_synthetic(
     return finding
 
 
-# ---------------------------------------------------------------------------
-# Node functions
-# Each node receives the full TuskerState and returns a partial state dict
-# (LangGraph merges it back using the Annotated reducers).
-# ---------------------------------------------------------------------------
+# Node functions - each returns a partial state dict that LangGraph merges back
+
+def repo_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate repository and PR existence/accessibility.
+    Returns `validator_failed` flag in state when validation fails.
+    """
+    workflow_id = state.get("workflow_id")
+    repository = state.get("repository", "")
+    pr_number = state.get("pr_number", 0)
+    fid = state.get("_fid", 1)
+    start = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "repo_validator"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.repo_validator.repo_validator_agent", "run_repo_validator_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=repository,
+                pr_number=pr_number,
+                fid=fid,
+            )
+            findings = result.get("findings", [])
+            fid = result.get("fid", fid + len(findings))
+            failed = result.get("validator_failed", False)
+            log = result.get("agent_log", {"agent": "repo_validator", "status": "COMPLETED",
+                                           "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()})
+        except Exception as exc:
+            logger.exception("repo_validator_failed")
+            findings = [{
+                "id": fid, "agent": "repo_validator", "severity": "HIGH",
+                "title": "Validator crashed", "description": str(exc),
+                "test_name": "agent_crash",
+            }]
+            fid += 1
+            failed = True
+            log = {"agent": "repo_validator", "status": "FAILED",
+                   "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                   "error": str(exc)}
+    else:
+        findings = [{
+            "id": fid, "agent": "repo_validator", "severity": "HIGH",
+            "title": "Validator missing", "description": "Module not found",
+            "test_name": "agent_missing",
+        }]
+        log = {"agent": "repo_validator", "status": "FAILED",
+               "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()}
+        fid += 1
+        failed = True
+
+    _post_agent_comment_now("repo_validator", findings, state, {"decision": "REJECT" if failed else "PASS",
+                                                                  "summary": "Repository validation failed" if failed else "Repository validated successfully",
+                                                                  "risk_level": "HIGH" if failed else "NONE",
+                                                                  "test_count": len(findings)})
+
+    return {"findings": findings, "agent_logs": [log], "_fid": fid, "validator_failed": failed}
+
 
 def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Planner Agent — fetches the PR diff from the active git provider,
-    analyses risk areas, and populates diff_context on the workflow state.
-
-    Every downstream agent reads state['diff_context'] so findings can be
-    annotated with diff_relevance (direct | related | unrelated | systemic).
+    """Fetch the PR diff from the active git provider and populate diff_context
+    on the workflow state. Every downstream agent reads diff_context so findings
+    can be annotated with diff_relevance: direct, related, unrelated, or systemic.
     """
     workflow_id = state.get("workflow_id")
     repository  = state.get("repository", "")
@@ -284,7 +304,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # ── Fetch diff from the active provider ──────────────────────────────────
+    # Fetch diff from the active provider
     diff_context: Dict[str, Any] = {}
     planner_context_text = ""
     try:
@@ -298,7 +318,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             diff_context.get("risk_flags", []),
         )
     except Exception:
-        logger.exception("planner_diff_fetch_failed workflow=%s — continuing without diff", workflow_id)
+        logger.exception("planner_diff_fetch_failed workflow=%s - continuing without diff", workflow_id)
         diff_context = {"available": False, "provider": git_provider,
                         "owner_repo": repository, "pr_number": pr_number}
 
@@ -355,11 +375,10 @@ def _run_eng_agent(
     test_name: str,
     state: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Generic engineering agent runner used by backend/frontend/security/sre nodes.
-    Passes diff_context to agent runners (if they accept it).
-    Annotates returned findings with diff_relevance metadata.
-    Tries the real agent module first; falls back to LLM/synthetic.
+    """Generic runner for backend/frontend/security/sre nodes.
+    Tries the real agent module first, falls back to LLM or synthetic.
+    Passes diff_context only if the agent function accepts it.
+    Annotates returned findings with diff_relevance.
     """
     workflow_id  = state.get("workflow_id")
     repository   = state.get("repository", "unknown/repo")
@@ -391,6 +410,11 @@ def _run_eng_agent(
             )
             if "diff_context" in sig.parameters:
                 kwargs["diff_context"] = diff_context
+            # Pass ephemeral deployment info if the agent accepts it
+            if "deploy_url" in sig.parameters:
+                kwargs["deploy_url"] = state.get("deploy_url", "")
+            if "build_success" in sig.parameters:
+                kwargs["build_success"] = state.get("build_success", False)
 
             result = runner(**kwargs)
             agent_findings = result.get("findings", [])
@@ -465,13 +489,451 @@ def sre_node(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
+def builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the application from PR source code."""
+    workflow_id = state.get("workflow_id")
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "builder"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.builder.builder_agent", "run_builder_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                fid=fid,
+            )
+            findings         = result.get("findings", [])
+            fid              = result.get("fid", fid + len(findings))
+            build_success    = result.get("build_success", False)
+            build_artifacts  = result.get("build_artifacts", {})
+            workspace_dir    = result.get("workspace_dir", "")
+            log              = result.get("agent_log", {
+                "agent": "builder", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+
+            _post_agent_comment_now("builder", findings, state)
+            return {
+                "findings": findings,
+                "agent_logs": [log],
+                "_fid": fid,
+                "build_success": build_success,
+                "build_artifacts": build_artifacts,
+                "workspace_dir": workspace_dir,
+            }
+        except Exception as exc:
+            logger.exception("builder_agent_failed")
+            return {
+                "findings": [{
+                    "id": fid, "agent": "builder", "severity": "HIGH",
+                    "title": "Builder agent crashed", "description": str(exc),
+                    "test_name": "agent_crash",
+                }],
+                "agent_logs": [{
+                    "agent": "builder", "status": "FAILED",
+                    "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                    "error": str(exc),
+                }],
+                "_fid": fid + 1,
+            }
+    else:
+        return {
+            "findings": [{
+                "id": fid, "agent": "builder", "severity": "HIGH",
+                "title": "Builder agent not available", "description": "Builder agent module not found",
+                "test_name": "agent_missing",
+            }],
+            "agent_logs": [{
+                "agent": "builder", "status": "FAILED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            }],
+            "_fid": fid + 1,
+        }
+
+
+def deployer_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Deploy built application to ephemeral environment."""
+    workflow_id = state.get("workflow_id")
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "deployer"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.deployer.deployer_agent", "run_deployer_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                build_artifacts=state.get("build_artifacts", {}),
+                fid=fid,
+            )
+            findings         = result.get("findings", [])
+            fid              = result.get("fid", fid + len(findings))
+            deploy_success   = result.get("deploy_success", False)
+            deploy_url       = result.get("deploy_url", "")
+            public_url       = result.get("public_url", "")
+            host_port        = result.get("host_port", 0)
+            container_name   = result.get("container_name", "")
+            log              = result.get("agent_log", {
+                "agent": "deployer", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+            if public_url:
+                log["public_url"] = public_url
+                log["host_port"]  = host_port
+
+            _post_agent_comment_now("deployer", findings, state)
+            return {
+                "findings": findings,
+                "agent_logs": [log],
+                "_fid": fid,
+                "deploy_success": deploy_success,
+                "deploy_url": deploy_url,
+                "public_url": public_url,
+                "host_port": host_port,
+                "container_name": container_name,
+            }
+        except Exception as exc:
+            logger.exception("deployer_agent_failed")
+            return {
+                "findings": [{
+                    "id": fid, "agent": "deployer", "severity": "HIGH",
+                    "title": "Deployer agent crashed", "description": str(exc),
+                    "test_name": "agent_crash",
+                }],
+                "agent_logs": [{
+                    "agent": "deployer", "status": "FAILED",
+                    "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                    "error": str(exc),
+                }],
+                "_fid": fid + 1,
+            }
+    else:
+        return {
+            "findings": [{
+                "id": fid, "agent": "deployer", "severity": "HIGH",
+                "title": "Deployer agent not available", "description": "Deployer agent module not found",
+                "test_name": "agent_missing",
+            }],
+            "agent_logs": [{
+                "agent": "deployer", "status": "FAILED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            }],
+            "_fid": fid + 1,
+        }
+
+
+def tester_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute automated tests against deployed application."""
+    workflow_id = state.get("workflow_id")
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "tester"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.tester.tester_agent", "run_tester_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                deploy_url=state.get("deploy_url", ""),
+                workspace_dir=state.get("workspace_dir", ""),
+                fid=fid,
+            )
+            findings         = result.get("findings", [])
+            fid              = result.get("fid", fid + len(findings))
+            test_success     = result.get("test_success", False)
+            test_results     = result.get("test_results", {})
+            log              = result.get("agent_log", {
+                "agent": "tester", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+
+            _post_agent_comment_now("tester", findings, state)
+            return {
+                "findings": findings,
+                "agent_logs": [log],
+                "_fid": fid,
+                "test_success": test_success,
+                "test_results": test_results,
+            }
+        except Exception as exc:
+            logger.exception("tester_agent_failed")
+            return {
+                "findings": [{
+                    "id": fid, "agent": "tester", "severity": "HIGH",
+                    "title": "Tester agent crashed", "description": str(exc),
+                    "test_name": "agent_crash",
+                }],
+                "agent_logs": [{
+                    "agent": "tester", "status": "FAILED",
+                    "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                    "error": str(exc),
+                }],
+                "_fid": fid + 1,
+            }
+    else:
+        return {
+            "findings": [{
+                "id": fid, "agent": "tester", "severity": "HIGH",
+                "title": "Tester agent not available", "description": "Tester agent module not found",
+                "test_name": "agent_missing",
+            }],
+            "agent_logs": [{
+                "agent": "tester", "status": "FAILED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            }],
+            "_fid": fid + 1,
+        }
+
+
+def runtime_analyzer_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Analyze runtime behavior and test results."""
+    workflow_id = state.get("workflow_id")
+    fid         = state.get("_fid", 1)
+    start       = datetime.utcnow()
+
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "runtime_analyzer"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.runtime_analyzer.runtime_analyzer_agent", "run_runtime_analyzer_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                deploy_url=state.get("deploy_url", ""),
+                test_results=state.get("test_results", {}),
+                container_name=state.get("container_name", ""),
+                fid=fid,
+            )
+            findings         = result.get("findings", [])
+            fid              = result.get("fid", fid + len(findings))
+            analysis_results = result.get("analysis_results", {})
+            log              = result.get("agent_log", {
+                "agent": "runtime_analyzer", "status": "COMPLETED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            })
+
+            _post_agent_comment_now("runtime_analyzer", findings, state)
+            return {
+                "findings": findings,
+                "agent_logs": [log],
+                "_fid": fid,
+                "analysis_results": analysis_results,
+            }
+        except Exception as exc:
+            logger.exception("runtime_analyzer_agent_failed")
+            return {
+                "findings": [{
+                    "id": fid, "agent": "runtime_analyzer", "severity": "HIGH",
+                    "title": "Runtime analyzer agent crashed", "description": str(exc),
+                    "test_name": "agent_crash",
+                }],
+                "agent_logs": [{
+                    "agent": "runtime_analyzer", "status": "FAILED",
+                    "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+                    "error": str(exc),
+                }],
+                "_fid": fid + 1,
+            }
+    else:
+        return {
+            "findings": [{
+                "id": fid, "agent": "runtime_analyzer", "severity": "HIGH",
+                "title": "Runtime analyzer agent not available", "description": "Runtime analyzer agent module not found",
+                "test_name": "agent_missing",
+            }],
+            "agent_logs": [{
+                "agent": "runtime_analyzer", "status": "FAILED",
+                "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat(),
+            }],
+            "_fid": fid + 1,
+        }
+
+
+def api_validator_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate important REST endpoints after deployment."""
+    workflow_id = state.get("workflow_id")
+    fid = state.get("_fid", 1)
+    start = datetime.utcnow()
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "api_validator"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.api_validator.api_validator_agent", "run_api_validator_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                deploy_url=state.get("deploy_url", ""),
+                fid=fid,
+            )
+            findings = result.get("findings", [])
+            fid = result.get("fid", fid + len(findings))
+            log = result.get("agent_log", {"agent": "api_validator", "status": "COMPLETED",
+                                           "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()})
+            _post_agent_comment_now("api_validator", findings, state)
+            return {"findings": findings, "agent_logs": [log], "_fid": fid}
+        except Exception as exc:
+            logger.exception("api_validator_failed")
+            return {"findings": [{
+                        "id": fid, "agent": "api_validator", "severity": "HIGH",
+                        "title": "API validator crashed", "description": str(exc),
+                        "test_name": "agent_crash",
+                    }],
+                    "agent_logs": [{"agent": "api_validator","status": "FAILED",
+                                     "started_at": start.isoformat(),
+                                     "completed_at": datetime.utcnow().isoformat(),
+                                     "error": str(exc)}],
+                    "_fid": fid + 1}
+    else:
+        return {"findings": [{
+                    "id": fid, "agent": "api_validator", "severity": "HIGH",
+                    "title": "API validator not available", "description": "Module missing",
+                    "test_name": "agent_missing",
+                }],
+                "agent_logs": [{"agent": "api_validator","status": "FAILED",
+                                 "started_at": start.isoformat(),
+                                 "completed_at": datetime.utcnow().isoformat()}],
+                "_fid": fid + 1}
+
+
+def security_runtime_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Scan built image for security issues."""
+    workflow_id = state.get("workflow_id")
+    fid = state.get("_fid", 1)
+    start = datetime.utcnow()
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "security_runtime"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.security_runtime.security_runtime_agent", "run_security_runtime_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                build_artifacts=state.get("build_artifacts", {}),
+                fid=fid,
+            )
+            findings = result.get("findings", [])
+            fid = result.get("fid", fid + len(findings))
+            log = result.get("agent_log", {"agent": "security_runtime", "status": "COMPLETED",
+                                           "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()})
+            _post_agent_comment_now("security_runtime", findings, state)
+            return {"findings": findings, "agent_logs": [log], "_fid": fid}
+        except Exception as exc:
+            logger.exception("security_runtime_failed")
+            return {"findings": [{
+                        "id": fid, "agent": "security_runtime", "severity": "HIGH",
+                        "title": "Security runtime agent crashed", "description": str(exc),
+                        "test_name": "agent_crash",
+                    }],
+                    "agent_logs": [{"agent": "security_runtime","status": "FAILED",
+                                     "started_at": start.isoformat(),
+                                     "completed_at": datetime.utcnow().isoformat(),
+                                     "error": str(exc)}],
+                    "_fid": fid + 1}
+    else:
+        return {"findings": [{
+                    "id": fid, "agent": "security_runtime", "severity": "HIGH",
+                    "title": "Security runtime agent not available", "description": "Module missing",
+                    "test_name": "agent_missing",
+                }],
+                "agent_logs": [{"agent": "security_runtime","status": "FAILED",
+                                 "started_at": start.isoformat(),
+                                 "completed_at": datetime.utcnow().isoformat()}],
+                "_fid": fid + 1}
+
+
+def cleanup_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Tear down PR container and workspace."""
+    workflow_id = state.get("workflow_id")
+    fid = state.get("_fid", 1)
+    start = datetime.utcnow()
+    try:
+        if _registry is not None:
+            _registry.update_workflow_sync(str(workflow_id), {"current_agent": "cleanup"})
+    except Exception:
+        pass
+
+    runner = _import_runner("agents.cleanup.cleanup_agent", "run_cleanup_agent")
+    if runner:
+        try:
+            result = runner(
+                workflow_id=workflow_id,
+                repository=state.get("repository", ""),
+                pr_number=state.get("pr_number", 0),
+                container_name=state.get("container_name", ""),
+                workspace_dir=state.get("workspace_dir", ""),
+                build_artifacts=state.get("build_artifacts", {}),
+                fid=fid,
+            )
+            findings = result.get("findings", [])
+            fid = result.get("fid", fid + len(findings))
+            log = result.get("agent_log", {"agent": "cleanup", "status": "COMPLETED",
+                                           "started_at": start.isoformat(), "completed_at": datetime.utcnow().isoformat()})
+            _post_agent_comment_now("cleanup", findings, state)
+            return {"findings": findings, "agent_logs": [log], "_fid": fid}
+        except Exception as exc:
+            logger.exception("cleanup_failed")
+            return {"findings": [{
+                        "id": fid, "agent": "cleanup", "severity": "HIGH",
+                        "title": "Cleanup agent crashed", "description": str(exc),
+                        "test_name": "agent_crash",
+                    }],
+                    "agent_logs": [{"agent": "cleanup","status": "FAILED",
+                                     "started_at": start.isoformat(),
+                                     "completed_at": datetime.utcnow().isoformat(),
+                                     "error": str(exc)}],
+                    "_fid": fid + 1}
+    else:
+        return {"findings": [{
+                    "id": fid, "agent": "cleanup", "severity": "HIGH",
+                    "title": "Cleanup agent not available", "description": "Module missing",
+                    "test_name": "agent_missing",
+                }],
+                "agent_logs": [{"agent": "cleanup","status": "FAILED",
+                                 "started_at": start.isoformat(),
+                                 "completed_at": datetime.utcnow().isoformat()}],
+                "_fid": fid + 1}
+
+
 def log_inspector_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Log Inspector Agent — reads /logs/events from every microservice.
-    Acts as the "server-side QA tester" in a multi-QA scenario.
-    Posts server-side observations to bus_observations for the correlator.
-    Runs in parallel with the client-side engineering agents conceptually,
-    but is placed after sre_node in the serial graph to keep state merging simple.
+    """Read /logs/events from every microservice and post observations to bus_observations.
+    Placed after sre_node so the correlator can join client and server findings.
     """
     workflow_id = state.get("workflow_id")
     fid         = state.get("_fid", 1)
@@ -523,10 +985,8 @@ def log_inspector_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def correlator_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Correlator Agent — joins client-side findings with server-side bus observations
-    to produce root cause chains and a developer brief.
-    This is the "QA team meeting" step where all evidence is synthesised.
+    """Join client-side test findings with server-side log observations.
+    Produces root cause chains and a developer brief.
     """
     workflow_id      = state.get("workflow_id")
     findings         = state.get("findings", [])
@@ -596,10 +1056,8 @@ def correlator_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def challenger_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Challenger Agent — reviews all findings and raises disputes for
-    environment-variance issues (e.g. container cold-start latency).
-    Delegates to agents.challenger.challenger_agent.run_challenger_agent.
+    """Review all findings and raise disputes for environment-variance issues
+    like container cold-start latency. Delegates to run_challenger_agent.
     """
     workflow_id = state.get("workflow_id")
     findings    = state.get("findings", [])
@@ -642,7 +1100,7 @@ def challenger_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 challenges.append({
                     "finding_id": f.get("id"),
                     "challenger_agent": "challenger",
-                    "challenge_reason": "Benchmark environment variance detected — latency may be inflated by container cold start",
+                    "challenge_reason": "Benchmark environment variance detected - latency may be inflated by container cold start",
                     "decision": "REVIEW",
                     "created_at": datetime.utcnow().isoformat(),
                 })
@@ -668,9 +1126,8 @@ def challenger_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def qa_lead_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    QA Lead Agent — synthesises findings into a standup summary
-    and risk assessment using phi3:mini (or template fallback).
+    """Synthesise all findings into a risk assessment and standup summary.
+    Uses phi3:mini if Ollama is available, otherwise uses a template fallback.
     """
     workflow_id = state.get("workflow_id")
     findings = state.get("findings", [])
@@ -724,10 +1181,8 @@ def qa_lead_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Judge Agent — makes the final automated deployment decision.
-    Decision is APPROVE, REJECT, or REVIEW_REQUIRED.
-    REVIEW_REQUIRED triggers the human approval interrupt.
+    """Make the final automated deployment decision: APPROVE, REJECT, or REVIEW_REQUIRED.
+    REVIEW_REQUIRED triggers the human approval interrupt node.
     """
     workflow_id = state.get("workflow_id")
     findings = state.get("findings", [])
@@ -750,6 +1205,7 @@ def judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 challenges=challenges,
                 qa_summary=qa_summary,
                 risk_level=risk_level,
+                runtime_analysis=state.get("analysis_results", {}),
             )
             decision = result.get("decision", "REVIEW_REQUIRED")
             rationale = result.get("rationale", "")
@@ -810,22 +1266,17 @@ def judge_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def human_approval_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Human Approval Node — pauses execution using LangGraph's interrupt().
+    """Pause the pipeline for human review using LangGraph interrupt().
 
-    When LangGraph reaches this node it serialises state to the
-    checkpointer and raises an Interrupt exception.  Execution resumes
-    when the API layer calls ``graph.invoke(Command(resume=...))`` with
-    the human's decision.
-
-    The interrupt payload is a dict describing what the human needs to
-    decide, shown in the dashboard.
+    LangGraph serialises state and raises Interrupt when this node runs.
+    Execution resumes when the API calls graph.invoke(Command(resume=...))
+    with the human decision. The interrupt payload is shown in the dashboard.
     """
     try:
         from langgraph.types import interrupt
     except ImportError:
         # Fallback: treat as APPROVE if LangGraph interrupt not available
-        logger.warning("langgraph_interrupt_unavailable — auto-approving")
+        logger.warning("langgraph_interrupt_unavailable - auto-approving")
         return {"human_decision": "APPROVE", "human_reason": "interrupt_unavailable"}
 
     workflow_id = state.get("workflow_id")
@@ -849,7 +1300,7 @@ def human_approval_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "options": ["APPROVE", "REJECT", "RETEST"],
     }
 
-    # This call serialises state and raises Interrupt — execution pauses here.
+    # This call serialises state and raises Interrupt. Execution pauses here.
     human_response = interrupt(interrupt_payload)
 
     # --- Execution resumes here after Command(resume=...) is called ---
@@ -867,51 +1318,56 @@ def human_approval_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Edge condition functions
-# ---------------------------------------------------------------------------
+# Edge routing functions
+
+def route_after_validator(state: Dict[str, Any]) -> str:
+    """Route after repo validation node.
+    Validation failures route to END — execute_workflow detects validator_failed in the
+    final state and posts a REJECT comment + marks the workflow as FAILED.
+    """
+    if state.get("validator_failed"):
+        return "end"
+    return "planner"
+
 
 def route_after_judge(state: Dict[str, Any]) -> str:
-    """
-    After the Judge node, decide which node to visit next.
-    APPROVE / REJECT → END immediately (auto-decision, no human gate)
-    REVIEW_REQUIRED  → human_approval_node (pause for human)
+    """Route after judge.
+    APPROVE/REJECT → cleanup (container no longer needed, human has read the result).
+    REVIEW_REQUIRED → human_approval (keep container alive so human can inspect the app).
+    Cleanup runs AFTER human_approval so the ephemeral container stays accessible
+    to the human reviewer until they make their decision.
     """
     decision = (state.get("decision") or "REVIEW_REQUIRED").upper()
-    if decision == "APPROVE":
-        return "end"
-    elif decision == "REJECT":
-        return "end"
-    else:
-        return "human_approval"
+    if decision in ("APPROVE", "REJECT"):
+        return "cleanup"
+    return "human_approval"
 
 
 def route_after_human(state: Dict[str, Any]) -> str:
+    """Route after human approval.
+    Always goes to cleanup first to tear down the ephemeral container.
+    cleanup then routes to planner (RETEST) or END.
     """
-    After the human approval node, decide what happens next.
-    APPROVE / REJECT → END
-    RETEST           → back to planner (full re-run)
+    return "cleanup"
+
+
+def route_after_cleanup(state: Dict[str, Any]) -> str:
+    """Route after cleanup.
+    If the human chose RETEST, go back to planner for a fresh pipeline run.
+    Otherwise end the workflow.
     """
-    decision = (state.get("human_decision") or "APPROVE").upper()
-    if decision == "RETEST":
+    human_decision = (state.get("human_decision") or "APPROVE").upper()
+    if human_decision == "RETEST":
         return "planner"
     return "end"
 
 
-# ---------------------------------------------------------------------------
-# Graph builder — tries LangGraph first, falls back to SimpleGraph
-# ---------------------------------------------------------------------------
+# Graph builder - tries LangGraph first, falls back to SimpleGraph
 
 def build_graph():
-    """
-    Build and return the TuskerSquad workflow graph.
+    """Build the TuskerSquad LangGraph StateGraph.
 
-    Tries to build a real LangGraph StateGraph with:
-      - typed TuskerState
-      - MemorySaver checkpointer (in-process; swap for PostgresSaver in prod)
-      - interrupt() human approval node
-      - conditional edges with retry semantics
-
+    Uses MemorySaver checkpointer. Swap for PostgresSaver in production.
     Falls back to SimpleGraph if langgraph is not installed.
     """
     try:
@@ -923,53 +1379,81 @@ def build_graph():
         builder = StateGraph(TuskerState)
 
         # Register nodes
+        builder.add_node("repo_validator", repo_validator_node)
         builder.add_node("planner",       planner_node)
         builder.add_node("backend",       backend_node)
         builder.add_node("frontend",      frontend_node)
         builder.add_node("security",      security_node)
         builder.add_node("sre",           sre_node)
-        builder.add_node("log_inspector", log_inspector_node)   # server-side QA
-        builder.add_node("correlator",    correlator_node)      # cross-layer RCA
+        builder.add_node("builder",       builder_node)
+        builder.add_node("deployer",      deployer_node)
+        builder.add_node("tester",        tester_node)
+        builder.add_node("api_validator", api_validator_node)
+        builder.add_node("security_runtime", security_runtime_node)
+        builder.add_node("runtime_analyzer", runtime_analyzer_node)
+        builder.add_node("log_inspector", log_inspector_node)   # reads microservice logs
+        builder.add_node("correlator",    correlator_node)      # joins all findings into root cause chains
         builder.add_node("challenger",    challenger_node)
         builder.add_node("qa_lead",       qa_lead_node)
         builder.add_node("judge",         judge_node)
+        builder.add_node("cleanup",       cleanup_node)
         builder.add_node("human_approval", human_approval_node)
 
         # Pipeline edges:
         # Client-side agents run first, then server-side log inspector,
         # then correlator joins everything before challenger/qa_lead/judge.
-        builder.add_edge(START,          "planner")
+        # start with repository validation
+        builder.add_edge(START, "repo_validator")
+        # after validation either planner or end
+        builder.add_conditional_edges(
+            "repo_validator",
+            route_after_validator,
+            {"planner": "planner", "end": END},
+        )
         builder.add_edge("planner",      "backend")
         builder.add_edge("backend",      "frontend")
         builder.add_edge("frontend",     "security")
         builder.add_edge("security",     "sre")
-        builder.add_edge("sre",          "log_inspector")  # server logs after client tests
-        builder.add_edge("log_inspector","correlator")     # correlate all evidence
+        builder.add_edge("sre",          "builder")
+        builder.add_edge("builder",      "deployer")
+        builder.add_edge("deployer",     "tester")
+        builder.add_edge("tester",       "api_validator")
+        builder.add_edge("api_validator","security_runtime")
+        builder.add_edge("security_runtime", "runtime_analyzer")
+        builder.add_edge("runtime_analyzer", "log_inspector")  # log inspector runs after runtime analysis
+        builder.add_edge("log_inspector","correlator")     # correlator joins client and server findings
         builder.add_edge("correlator",   "challenger")
         builder.add_edge("challenger",   "qa_lead")
         builder.add_edge("qa_lead",      "judge")
-
-        # Conditional: judge → human_approval or END
+        # Pipeline order for ephemeral container lifecycle:
+        #   APPROVE / REJECT  → cleanup immediately (human has read the result, no review needed)
+        #   REVIEW_REQUIRED   → human_approval first (keep container alive for human inspection)
+        #                       → cleanup after human decides
+        #                       → planner (RETEST) or END
+        #
+        # This ensures the ephemeral PR container is accessible at its public URL
+        # (http://DOCKER_HOST_IP:port) while the human reviewer is making their decision.
         builder.add_conditional_edges(
             "judge",
             route_after_judge,
-            {
-                "end": END,
-                "human_approval": "human_approval",
-            },
+            {"cleanup": "cleanup", "human_approval": "human_approval"},
         )
 
-        # Conditional: human_approval → planner (retest) or END
+        # human_approval always goes to cleanup next
         builder.add_conditional_edges(
             "human_approval",
             route_after_human,
-            {
-                "planner": "planner",
-                "end": END,
-            },
+            {"cleanup": "cleanup"},
         )
 
-        # MemorySaver checkpointer — state is serialised after every node
+        # After cleanup: end normally, or retest (RETEST decision from human)
+        builder.add_conditional_edges(
+            "cleanup",
+            route_after_cleanup,
+            {"planner": "planner", "end": END},
+        )
+
+        # MemorySaver checkpointer - state is saved after every node
         checkpointer = MemorySaver()
         graph = builder.compile(checkpointer=checkpointer)
 
@@ -978,27 +1462,21 @@ def build_graph():
 
     except ImportError as exc:
         logger.warning(
-            "langgraph_not_installed — using SimpleGraph fallback: %s", exc
+            "langgraph_not_installed - using SimpleGraph fallback: %s", exc
         )
         return SimpleGraph()
     except Exception as exc:
-        logger.exception("langgraph_build_failed — using SimpleGraph fallback")
+        logger.exception("langgraph_build_failed - using SimpleGraph fallback")
         return SimpleGraph()
 
 
-# ---------------------------------------------------------------------------
-# LangGraphWrapper — adapts compiled LangGraph to the .invoke() interface
-# expected by execute_workflow()
-# ---------------------------------------------------------------------------
+# LangGraphWrapper - adapts compiled LangGraph to the .invoke() interface
 
 class LangGraphWrapper:
-    """
-    Thin wrapper around a compiled LangGraph that presents the same
-    ``.invoke(state)`` interface as ``SimpleGraph``.
+    """Thin wrapper around a compiled LangGraph graph.
 
-    LangGraph ``invoke`` requires a ``config`` dict with a ``thread_id``
-    (used by the checkpointer to namespace state).  We derive this from
-    the ``workflow_id`` so every workflow run has isolated checkpoint state.
+    Presents the same .invoke(state) interface as SimpleGraph.
+    Derives thread_id from workflow_id so each run has isolated checkpoint state.
     """
 
     def __init__(self, graph):
@@ -1069,15 +1547,11 @@ class LangGraphWrapper:
             return None
 
 
-# ---------------------------------------------------------------------------
 # SimpleGraph fallback (used when langgraph is not installed)
-# ---------------------------------------------------------------------------
 
 class SimpleGraph:
-    """
-    Synchronous, deterministic fallback that replicates the LangGraph
-    node execution order without requiring the langgraph package.
-    Used for development environments or when langgraph is unavailable.
+    """Synchronous fallback that runs the same node order as LangGraph.
+    Used when langgraph is not installed.
     """
 
     def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
@@ -1103,18 +1577,65 @@ class SimpleGraph:
             "rationale":         "",
             "human_decision":    None,
             "human_reason":      None,
+            "validator_failed":  False,
+            "build_success":     False,
+            "build_artifacts":   {},
+            "deploy_success":    False,
+            "deploy_url":        "",
+            "public_url":        "",
+            "host_port":         0,
+            "container_name":    "",
+            "workspace_dir":     "",
+            "test_success":      False,
+            "test_results":      {},
+            "analysis_results":  {},
             "_fid":              1,
         }
 
-        # Run each node in order, merging returned partial state.
-        # log_inspector runs after client-side agents so it can see their findings on bus.
-        # correlator runs after log_inspector to join all evidence.
+        def _merge(current: dict, partial: dict) -> None:
+            """Merge partial state update into current state (in-place)."""
+            for k, v in partial.items():
+                if isinstance(v, list) and isinstance(current.get(k), list):
+                    current[k] = current[k] + v
+                else:
+                    current[k] = v
+
+        # ── Step 1: Repository validation (MUST run first) ────────────────────
+        # If validation fails, abort immediately — no other agents should run.
+        partial = repo_validator_node(current)
+        _merge(current, partial)
+        if current.get("validator_failed"):
+            logger.warning(
+                "SimpleGraph: validator_failed=True for workflow=%s — aborting pipeline",
+                workflow_id,
+            )
+            return current  # execute_workflow will detect validator_failed and reject
+
+        # ── Step 2: Static analysis agents ────────────────────────────────────
         for node_fn in [
             planner_node,
             backend_node,
             frontend_node,
             security_node,
             sre_node,
+        ]:
+            partial = node_fn(current)
+            _merge(current, partial)
+
+        # ── Step 3: Build/deploy/test pipeline ────────────────────────────────
+        for node_fn in [
+            builder_node,
+            deployer_node,
+            tester_node,
+            api_validator_node,
+            security_runtime_node,
+            runtime_analyzer_node,
+        ]:
+            partial = node_fn(current)
+            _merge(current, partial)
+
+        # ── Step 4: Analysis and governance ───────────────────────────────────
+        for node_fn in [
             log_inspector_node,
             correlator_node,
             challenger_node,
@@ -1122,11 +1643,20 @@ class SimpleGraph:
             judge_node,
         ]:
             partial = node_fn(current)
-            # Merge: append lists, overwrite scalars
-            for k, v in partial.items():
-                if isinstance(v, list) and isinstance(current.get(k), list):
-                    current[k] = current[k] + v
-                else:
-                    current[k] = v
+            _merge(current, partial)
+
+        # ── Step 5: Human approval gate (REVIEW_REQUIRED only) ─────────────
+        # Keep the ephemeral container alive while the human reviews it.
+        # human_approval_node blocks until the human approves/rejects/retests.
+        decision = (current.get("decision") or "").upper()
+        if decision == "REVIEW_REQUIRED":
+            partial = human_approval_node(current)
+            _merge(current, partial)
+
+        # ── Step 6: Cleanup ───────────────────────────────────────────────────
+        # Always run cleanup AFTER human approval so the ephemeral container
+        # remains accessible at its public URL until the human has decided.
+        partial = cleanup_node(current)
+        _merge(current, partial)
 
         return current

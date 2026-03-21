@@ -4,6 +4,7 @@
  * with tab-per-agent switching.
  */
 import React, { useState } from 'react'
+import { formatClock, fullTooltip } from '../utils/time'
 
 const AGENT_ICONS = {
   planner:'🧭', backend:'⚙️', frontend:'🎨', security:'🔐',
@@ -49,10 +50,10 @@ export default function ReasoningViewer({ reasoning = [] }) {
               marginBottom: 10, fontSize: 10, color: '#6B7280',
             }}>
               <span>
-                {current.started_at && `Started: ${new Date(current.started_at).toLocaleTimeString()}`}
+                {current.started_at && <span title={fullTooltip(current.started_at)}>Started: {formatClock(current.started_at)}</span>}
               </span>
               <span>
-                {current.completed_at && `Completed: ${new Date(current.completed_at).toLocaleTimeString()}`}
+                {current.completed_at && <span title={fullTooltip(current.completed_at)}>Completed: {formatClock(current.completed_at)}</span>}
               </span>
             </div>
             <pre>{current.output || '(no output recorded)'}</pre>

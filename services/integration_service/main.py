@@ -5,10 +5,10 @@ Receives webhooks from Gitea, GitHub, and GitLab.
 Triggers the LangGraph review pipeline on PR/MR events.
 
 Webhook endpoints:
-  POST /gitea/webhook    — Gitea pull_request events
-  POST /github/webhook   — GitHub pull_request events
-  POST /gitlab/webhook   — GitLab merge_request events
-  POST /webhook/simulate — Manual trigger for any provider (testing)
+  POST /gitea/webhook    - Gitea pull_request events
+  POST /github/webhook   - GitHub pull_request events
+  POST /gitlab/webhook   - GitLab merge_request events
+  POST /webhook/simulate - Manual trigger for any provider (testing)
 """
 
 import asyncio
@@ -49,7 +49,7 @@ GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 GITLAB_TOKEN          = os.getenv("GITLAB_TOKEN",          "")
 GITLAB_WEBHOOK_SECRET = os.getenv("GITLAB_WEBHOOK_SECRET", "")
 
-_GITEA_TRIGGER  = {"opened", "synchronize", "reopened", "created", "reopen"}
+_GITEA_TRIGGER  = {"opened", "synchronized", "reopened", "created", "reopen"}
 _GITHUB_TRIGGER = {"opened", "synchronize", "reopened", "ready_for_review"}
 _GITLAB_TRIGGER = {"open", "reopen", "update"}
 
@@ -61,7 +61,6 @@ _SRE_TOOL      = os.getenv("SRE_LOAD_TOOL",      "httpx")
 
 @app.on_event("startup")
 async def _startup_log():
-    logger.info("=" * 60)
     logger.info("TuskerSquad Integration Service v2 starting")
     logger.info("  Gitea  : token=%s secret=%s -> POST /gitea/webhook",
                 bool(GITEA_TOKEN), bool(GITEA_WEBHOOK_SECRET))
@@ -70,10 +69,9 @@ async def _startup_log():
     logger.info("  GitLab : token=%s secret=%s -> POST /gitlab/webhook",
                 bool(GITLAB_TOKEN), bool(GITLAB_WEBHOOK_SECRET))
     logger.info("  LangGraph : %s", LANGGRAPH_URL)
-    logger.info("=" * 60)
 
 
-# ── HTTP helpers ──────────────────────────────────────────────────────────────
+# HTTP helpers
 
 async def _post_with_retries(url: str, body: dict, retries: int = 3) -> dict:
     last_exc: Optional[Exception] = None
@@ -98,7 +96,7 @@ async def _start_workflow(repository: str, pr_number: int, provider: str = "gite
     )
 
 
-# ── "Review started" comment body ─────────────────────────────────────────────
+# "Review started" comment body
 
 def _review_started_body(provider: str, repository: str,
                           pr_number: int, action: str) -> str:
@@ -106,22 +104,30 @@ def _review_started_body(provider: str, repository: str,
         f"## TuskerSquad Review Started\n\n"
         f"> **{repository}** · PR #{pr_number} · `{action}` · provider: `{provider}`\n\n"
         "Full-stack agent pipeline is running. Results posted when complete.\n\n"
-        f"| Agent | Tool |\n|-------|------|\n"
-        f"| Planner | diff analysis ({provider}) |\n"
-        f"| Backend | {_BACKEND_TOOL} |\n"
-        f"| Frontend | {_FRONTEND_TOOL} |\n"
-        f"| Security | {_SECURITY_TOOL} probes |\n"
-        f"| SRE | {_SRE_TOOL} load test |\n"
-        f"| Log Inspector | /logs/events |\n"
-        f"| Correlator | root cause analysis |\n"
-        f"| Challenger | false-positive review |\n"
-        f"| QA Lead | risk synthesis |\n"
-        f"| Judge | final decision |\n\n"
+        "| Agent | Role | Tool |\n|-------|------|------|\n"
+        "| Repo Validator | Verify PR and repository access | git + HTTP |\n"
+        f"| Planner | Scope the review, analyse PR diff | {provider} diff |\n"
+        f"| Backend Engineer | Run API test suite against PR code | {_BACKEND_TOOL} |\n"
+        f"| Frontend Engineer | UI behaviour, accessibility checks | {_FRONTEND_TOOL} |\n"
+        f"| Security Engineer | OWASP probes: auth bypass, SQLi, JWT, CORS | {_SECURITY_TOOL} |\n"
+        f"| SRE Engineer | p95 latency measurement, SLA analysis | {_SRE_TOOL} |\n"
+        "| Builder | Clone PR branch, build Docker image | docker build |\n"
+        "| Deployer | Deploy ephemeral container, expose preview URL | docker run |\n"
+        "| Tester | Run automated tests against live PR container | pytest |\n"
+        "| API Validator | Schema and contract validation | httpx |\n"
+        "| Security Runtime | Live attack probes against running container | httpx |\n"
+        "| Runtime Analyser | CPU / memory profiling, log analysis | docker stats |\n"
+        "| Log Inspector | Read structured logs from each microservice | /logs/events |\n"
+        "| Correlator | Join client findings + server logs into root causes | rule-based + LLM |\n"
+        "| Challenger | Dispute findings affected by environment variance | rule-based |\n"
+        "| QA Lead | Synthesise overall risk level | phi3:mini |\n"
+        "| Judge | Final APPROVE / REJECT / REVIEW_REQUIRED decision | qwen2.5:14b |\n"
+        "| Cleanup | Stop container, remove image, wipe workspace | docker rm |\n\n"
         "*TuskerSquad*"
     )
 
 
-# ── Provider comment helpers ───────────────────────────────────────────────────
+# Provider comment helpers
 
 async def _post_gitea_comment(repo: str, pr_number: int, body: str) -> bool:
     if not GITEA_TOKEN:
@@ -194,7 +200,7 @@ async def _post_gitlab_comment(repo: str, mr_number: int, body: str) -> bool:
         return False
 
 
-# ── Signature verification ────────────────────────────────────────────────────
+# Signature verification
 
 def _verify_gitea_sig(raw_body: bytes, headers: dict) -> bool:
     if not GITEA_WEBHOOK_SECRET:
@@ -225,7 +231,7 @@ def _verify_gitlab_sig(raw_body: bytes, headers: dict) -> bool:
     return headers.get("x-gitlab-token", "") == GITLAB_WEBHOOK_SECRET
 
 
-# ── Payload parsers ────────────────────────────────────────────────────────────
+# Payload parsers
 
 def _parse_gitea(payload: dict) -> tuple:
     repo_obj = payload.get("repository") or {}
@@ -238,6 +244,11 @@ def _parse_gitea(payload: dict) -> tuple:
         pr_num = int(pr_num) if pr_num is not None else None
     except (TypeError, ValueError):
         pr_num = None
+    
+    # Log if action is missing (indicates webhook payload issue)
+    if not action and pr_num and repo:
+        logger.warning("gitea_webhook_missing_action repo='%s' pr=%s", repo, pr_num)
+    
     return repo, pr_num, action, sha
 
 
@@ -277,7 +288,7 @@ def _parse_gitlab(payload: dict) -> tuple:
     return repo, mr_iid, normalised, sha
 
 
-# ── Shared handler core ───────────────────────────────────────────────────────
+# Shared handler core
 
 async def _handle_pr_event(
     provider: str,
@@ -322,7 +333,7 @@ async def _handle_pr_event(
         return JSONResponse(status_code=200, content={"status": "error", "detail": str(exc)})
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# Routes
 
 @app.get("/health")
 def health():

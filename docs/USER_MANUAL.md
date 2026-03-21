@@ -97,7 +97,16 @@ curl -sS -X POST http://localhost:8001/webhook/simulate -H 'Content-Type: applic
 1. Gitea webhook triggers the Integration Service.
 2. Integration Service posts to LangGraph `/api/workflow/start` with `{repo, pr_number}`.
 3. LangGraph persists a `WorkflowRun` in Postgres and registers a light-weight in-memory workflow state for fast inspection.
-4. LangGraph starts deterministic orchestration (planner → backend → frontend → security → sre → challenger → judge). Each agent executes, emits logs and findings, then persists findings to `engineering_findings`.
+4. LangGraph starts deterministic orchestration:
+   - **Code Review Phase**: planner → backend → frontend → security → sre
+   - **Build Phase**: builder (clones PR code, builds Docker image)
+   - **Deploy Phase**: deployer (creates ephemeral container)
+   - **Test Phase**: tester (runs automated API and performance tests)
+   - **Analysis Phase**: runtime_analyzer (analyzes logs and behavior)
+   - **Log Analysis**: log_inspector (reads microservice logs)
+   - **Correlation**: correlator (joins all findings into root cause chains)
+   - **Validation**: challenger → qa_lead → judge
+5. Each agent executes, emits logs and findings, then persists findings to `engineering_findings`.
 5. If findings exist, LangGraph writes a governance record and sets the workflow status to `WAITING_HUMAN_APPROVAL`.
 6. The Dashboard UI polls `services/dashboard` which proxies the DB-backed endpoints on LangGraph.
 7. A human clicks `Approve` or `Reject` in the dashboard; LangGraph persists the governance decision and marks the workflow `COMPLETED`.

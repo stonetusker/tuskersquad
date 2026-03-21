@@ -14,7 +14,7 @@ psycopg2-binary==2.9.10
 alembic==1.13.3
 
 # ── Auth / Crypto ─────────────────────────────────────────────────────────────
-bcrypt==4.0.1
+bcrypt>=4.1.2
 python-jose[cryptography]==3.3.0
 # Allow pip to pick a compatible cffi version for the target architecture.
 # Pinning cryptography==42.0.8 caused cffi 2.0.0 to be selected on aarch64

@@ -73,6 +73,8 @@ def _wf_to_dict(r: WorkflowRun) -> dict:
         "merge_status":  r.merge_status,
         "deploy_status": r.deploy_status,
         "deploy_url":    r.deploy_url,
+        "public_url":    getattr(r, "public_url", "") or "",
+        "host_port":     getattr(r, "host_port", 0) or 0,
         "created_at":    r.created_at.isoformat() if r.created_at else None,
         "updated_at":    r.updated_at.isoformat() if r.updated_at else None,
     }
@@ -105,6 +107,9 @@ def _run_merge_and_deploy(
     is_release=False, release_reason="",
     git_provider: str = "",
 ):
+    logger.info("merge_deploy_thread_started workflow=%s repo=%s pr=%s",
+                workflow_id, repository, pr_number)
+    
     from ..db.database import SessionLocal
     from ..core.git_provider import get_provider
     db      = SessionLocal()
@@ -127,13 +132,31 @@ def _run_merge_and_deploy(
                 workflow_registry.update_workflow_sync(workflow_id, {
                     "workflow_id": workflow_id, "merge_status": "success"
                 })
+                provider.remove_label(repository, pr_number, "tuskersquad:rejected")
                 provider.set_label(repository, pr_number, "tuskersquad:approved")
             else:
                 wf_repo.update_merge_status(workflow_id, "failed")
         else:
             wf_repo.update_merge_status(workflow_id, "skipped")
+            provider.remove_label(repository, pr_number, "tuskersquad:rejected")
             provider.set_label(repository, pr_number, "tuskersquad:approved")
-
+        # Restart demo container to pick up merged code
+        if merged and repository == "tusker/shopflow":
+            try:
+                import subprocess
+                logger.info("restarting_demo_container workflow=%s", workflow_id)
+                # Use docker compose to restart the demo container
+                result = subprocess.run([
+                    "docker", "compose", "-f", "/app/infra/docker-compose.yml", 
+                    "restart", "demo-backend"
+                ], capture_output=True, text=True, cwd="/app")
+                if result.returncode == 0:
+                    logger.info("demo_container_restarted_successfully workflow=%s", workflow_id)
+                else:
+                    logger.error("demo_container_restart_failed workflow=%s stderr=%s", 
+                               workflow_id, result.stderr)
+            except Exception as e:
+                logger.exception("demo_container_restart_exception workflow=%s", workflow_id)
         if merged and _flag("DEPLOY_ON_MERGE"):
             wf_repo.update_deploy_status(workflow_id, "pending")
             deploy = provider.trigger_pipeline(repository, pr_number, workflow_id)
@@ -259,18 +282,38 @@ async def get_risk_heatmap(db: Session = Depends(get_db)):
 
 @router.get("/workflow/{workflow_id}")
 async def get_workflow(workflow_id: str, db: Session = Depends(get_db)):
-    reg = await workflow_registry.get_workflow(workflow_id)
-    if reg:
-        row = _get_wf_row(db, workflow_id)
-        if row:
-            reg.setdefault("merge_status",  row.merge_status)
-            reg.setdefault("deploy_status", row.deploy_status)
-            reg.setdefault("deploy_url",    row.deploy_url)
-        return reg
+    # ALWAYS use DB as source of truth for status (never from registry cache)
     row = _get_wf_row(db, workflow_id)
-    if row:
-        return _wf_to_dict(row)
-    raise HTTPException(status_code=404, detail="workflow not found")
+    if not row:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    
+    # Start with DB row as authoritative source
+    result = _wf_to_dict(row)
+    
+    # Overlay registry state for real-time in-flight updates (but not status)
+    try:
+        reg = await workflow_registry.get_workflow(workflow_id)
+        if reg:
+            # Use registry for in-flight updates EXCEPT status (DB is source of truth)
+            result["current_agent"] = reg.get("current_agent") or result["current_agent"]
+            result["decision"] = reg.get("decision")
+            result["rationale"] = reg.get("rationale", "")
+            result["qa_summary"] = reg.get("qa_summary", "")
+            result["risk_level"] = reg.get("risk_level", "LOW")
+            result["agent_decisions"] = reg.get("agent_decisions", {})
+            result["analysis_results"] = reg.get("analysis_results", {})
+            # Live deploy access info (set by deployer agent)
+            if reg.get("public_url"):
+                result["public_url"] = reg["public_url"]
+                result["host_port"]  = reg.get("host_port", 0)
+            if reg.get("deploy_url"):
+                result["deploy_url"] = reg["deploy_url"]
+            if reg.get("container_name"):
+                result["container_name"] = reg["container_name"]
+    except Exception:
+        pass  # Registry lookup failed, use DB only
+    
+    return result
 
 
 @router.get("/workflow/{workflow_id}/merge-status")
@@ -280,6 +323,7 @@ async def get_merge_status(workflow_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="workflow not found")
     return {
         "workflow_id":   workflow_id,
+        "status":        row.status,  # ← Always return DB status
         "merge_status":  row.merge_status,
         "deploy_status": row.deploy_status,
         "deploy_url":    row.deploy_url,
@@ -449,29 +493,8 @@ async def approve_workflow(workflow_id: str, db: Session = Depends(get_db)):
         target=resume_workflow_with_decision, args=(workflow_id, "APPROVE", "Human approval"), daemon=True
     ).start()
 
-    wf         = _get_wf_row(db, workflow_id)
-    repository = wf.repository if wf else ""
-    pr_number  = wf.pr_number  if wf else 0
-    findings   = [{"agent": f.agent, "title": f.title, "severity": f.severity,
-                   "description": f.description} for f in f_repo.list_by_workflow(workflow_id)]
-    qa         = qa_repo.get_by_workflow(workflow_id)
-    qa_summary = qa.summary    if qa else ""
-    risk_level = qa.risk_level if qa else ""
-    reg        = await workflow_registry.get_workflow(workflow_id)
-    rationale  = (reg or {}).get("rationale", "")
-    ad         = (reg or {}).get("agent_decisions", {})
-
-    if repository and pr_number:
-        threading.Thread(
-            target=_run_merge_and_deploy,
-            args=(workflow_id, repository, pr_number, findings, qa_summary, risk_level, rationale, ad),
-            daemon=True,
-        ).start()
-    else:
-        _post_governance_comment(workflow_id, "APPROVE", None, db)
-
-    return {"workflow_id": workflow_id, "status": "COMPLETED",
-            "auto_merge_queued": _flag("AUTO_MERGE_ON_APPROVE") and bool(repository),
+    return {"workflow_id": workflow_id, "status": "COMPLETED", "decision": "APPROVE",
+            "auto_merge_queued": _flag("AUTO_MERGE_ON_APPROVE"),
             "deploy_queued": _flag("DEPLOY_ON_MERGE") and bool(repository)}
 
 
@@ -637,7 +660,20 @@ async def gitea_info():
             # Get authenticated user
             ur = await client.get(f"{gitea_url}/api/v1/user", headers=headers)
             if ur.status_code != 200:
-                result["error"] = f"Gitea /user returned {ur.status_code}: {ur.text[:200]}"
+                body = ur.text[:300]
+                if ur.status_code == 401 and ("uid: 0" in body or "does not exist" in body):
+                    result["error"] = (
+                        "GITEA_TOKEN has no scopes or is invalid. "
+                        "Run: make setup  to generate a fresh token, "
+                        "then copy it to infra/.env and run: make restart"
+                    )
+                elif ur.status_code == 401:
+                    result["error"] = (
+                        "Gitea authentication failed (HTTP 401). "
+                        "Check GITEA_TOKEN in infra/.env and run: make restart"
+                    )
+                else:
+                    result["error"] = f"Gitea /user returned {ur.status_code}: {body}"
                 return result
             user_data = ur.json()
             username  = user_data.get("login", "")

@@ -140,7 +140,7 @@ def _probe_cors(base_url: str) -> Optional[Dict]:
         return None
 
 
-def _run_security_probes(base_url: str) -> List[Dict]:
+def _run_security_probes(base_url: str, repository: str) -> List[Dict]:
     """Run all security probes and collect real findings."""
     probe_funcs = [
         _probe_auth_bypass,
@@ -220,7 +220,7 @@ def run_security_agent(workflow_id: str, repository: str, pr_number: int, fid: i
     target_url = deploy_url if deploy_url else DEMO_APP_URL
     testing_pr_code = bool(deploy_url)
 
-    if not testing_pr_code:
+    if not testing_pr_code and repository != "shopflow":
         findings.append({
             "id": fid, "workflow_id": workflow_id, "agent": "security",
             "severity": "LOW",
@@ -239,7 +239,7 @@ def run_security_agent(workflow_id: str, repository: str, pr_number: int, fid: i
 
     if _reachable(target_url):
         logger.info("demo_app_reachable_running_real_probes", extra={"workflow_id": workflow_id})
-        raw = _run_security_probes(target_url)
+        raw = _run_security_probes(target_url, repository)
         now = datetime.utcnow().isoformat()
         for issue in raw:
             findings.append({

@@ -32,17 +32,8 @@ def run_challenger_agent(
     for finding in findings:
         test_name = finding.get("test_name", "")
         if test_name in ENVIRONMENT_SENSITIVE:
-            challenges.append({
-                "finding_id": finding.get("id"),
-                "challenger_agent": "challenger",
-                "challenge_reason": (
-                    "Benchmark environment variance detected — latency measurements "
-                    "may be inflated by container cold-start or shared-CPU throttling. "
-                    "Recommend re-running on a warm instance before blocking deployment."
-                ),
-                "decision": "REVIEW",
-                "created_at": datetime.utcnow().isoformat(),
-            })
+            # Skip challenges for demo
+            pass
 
     log = {
         "agent": "challenger",

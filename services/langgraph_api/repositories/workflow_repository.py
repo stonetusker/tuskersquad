@@ -52,13 +52,30 @@ class WorkflowRepository:
         self.db.commit()
         return wf
 
-    def update_deploy_status(self, workflow_id, deploy_status: str, deploy_url: Optional[str] = None) -> Optional[WorkflowRun]:
+    def update_deploy_status(self, workflow_id, deploy_status: str,
+                              deploy_url: Optional[str] = None,
+                              container_name: Optional[str] = None,
+                              workspace_dir: Optional[str] = None) -> Optional[WorkflowRun]:
         wf = self.get_workflow(workflow_id)
         if wf is None:
             return None
         wf.deploy_status = deploy_status
         if deploy_url:
             wf.deploy_url = deploy_url
+        if container_name is not None:
+            wf.container_name = container_name
+        if workspace_dir is not None:
+            wf.workspace_dir = workspace_dir
+        wf.updated_at = datetime.utcnow()
+        self.db.commit()
+        return wf
+
+    def update_analysis_results(self, workflow_id, analysis_results: dict) -> Optional[WorkflowRun]:
+        """Persist runtime analysis outputs into the workflow record."""
+        wf = self.get_workflow(workflow_id)
+        if wf is None:
+            return None
+        wf.analysis_results = analysis_results
         wf.updated_at = datetime.utcnow()
         self.db.commit()
         return wf
