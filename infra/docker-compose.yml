@@ -254,7 +254,7 @@ services:
       GITEA_TOKEN:           "${GITEA_TOKEN:-}"
       # Auto-Merge & Deploy
       AUTO_MERGE_ON_APPROVE: "${AUTO_MERGE_ON_APPROVE:-false}"
-      AUTO_APPROVE_DEMO:     "${AUTO_APPROVE_DEMO:-true}"
+      AUTO_APPROVE_DEMO:     "${AUTO_APPROVE_DEMO:-false}"
       MERGE_STYLE:           "${MERGE_STYLE:-merge}"
       DEPLOY_ON_MERGE:       "${DEPLOY_ON_MERGE:-false}"
       DEPLOY_BRANCH:         "${DEPLOY_BRANCH:-main}"
