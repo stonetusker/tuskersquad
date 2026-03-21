@@ -1,0 +1,120 @@
+From 4bb4aa15d763dc70886fca87196b9b47e117efe3 Mon Sep 17 00:00:00 2001
+From: Subeesh Sivanandan <contact@stonetusker.com>
+Date: Sat, 21 Mar 2026 13:54:11 +0530
+Subject: [PATCH] Introduced for the Demo - causes REJECT
+
+---
+ Dockerfile                      |  3 +++
+ apps/backend/main.py            |  2 +-
+ apps/backend/routes/auth.py     | 13 +++++++++++++
+ apps/backend/routes/checkout.py | 12 ++++--------
+ apps/backend/routes/products.py | 11 ++++++-----
+ 5 files changed, 27 insertions(+), 14 deletions(-)
+
+diff --git a/Dockerfile b/Dockerfile
+index 748d9bd..aebeca4 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -8,5 +8,8 @@ RUN pip install --no-cache-dir -r /tmp/demo-requirements.txt
+ RUN pip install --no-cache-dir pytest pytest-asyncio httpx anyio
+ COPY apps/ /app/apps/
+ ENV PYTHONPATH=/app
++ENV BUG_PRICE="true"
++ENV BUG_SECURITY="true"
++ENV BUG_SLOW="true"
+ HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=4)"
+ CMD ["uvicorn", "apps.backend.main:app", "--host", "0.0.0.0", "--port", "8080"]
+diff --git a/apps/backend/main.py b/apps/backend/main.py
+index cc0be8d..d1b3c48 100644
+--- a/apps/backend/main.py
++++ b/apps/backend/main.py
+@@ -31,7 +31,7 @@ app = FastAPI(
+ 
+ app.add_middleware(
+     CORSMiddleware,
+-    allow_origins=["http://localhost:5173", "http://localhost:8080", "http://127.0.0.1:5173", "http://127.0.0.1:8080"],
++    allow_origins=["*"],
+     allow_methods=["*"],
+     allow_headers=["*"],
+ )
+diff --git a/apps/backend/routes/auth.py b/apps/backend/routes/auth.py
+index 0df32f8..12fb8e6 100644
+--- a/apps/backend/routes/auth.py
++++ b/apps/backend/routes/auth.py
+@@ -18,3 +18,16 @@ def login(data: LoginRequest):
+         return {"access_token": token, "token_type": "bearer"}
+     finally:
+         db.close()
++
++
++# ⭐ VULNERABLE ENDPOINT - SQL injection
++@router.get("/search")
++def search_users(query: str):
++    db = SessionLocal()
++    try:
++        # DANGEROUS: direct string interpolation in SQL
++        result = db.execute(f"SELECT email FROM users WHERE email LIKE '%{query}%'")
++        users = [row[0] for row in result]
++        return {"users": users}
++    finally:
++        db.close()
+diff --git a/apps/backend/routes/checkout.py b/apps/backend/routes/checkout.py
+index 25e44ba..e82e4d1 100644
+--- a/apps/backend/routes/checkout.py
++++ b/apps/backend/routes/checkout.py
+@@ -26,11 +26,9 @@ def checkout(
+ 
+ ):
+ 
+-    # artificial performance bug
++    # artificial performance bug - always slow
+ 
+-    if BUG_SLOW:
+-
+-        time.sleep(3)
++    time.sleep(3)
+ 
+     db = SessionLocal()
+ 
+@@ -52,11 +50,9 @@ def checkout(
+ 
+             total += product.price * item.quantity
+ 
+-    # ⭐ intentional pricing defect
+-
+-    if BUG_PRICE:
++    # ⭐ intentional pricing defect - always inflate by 35%
+ 
+-        total = total * 1.35
++    total = total * 1.35
+ 
+     order = Order(
+ 
+diff --git a/apps/backend/routes/products.py b/apps/backend/routes/products.py
+index ab74b6c..e7a00c9 100644
+--- a/apps/backend/routes/products.py
++++ b/apps/backend/routes/products.py
+@@ -32,14 +32,15 @@ def search_products(q: str = Query(..., description="Search query")):
+     time.sleep(0.1)
+ 
+     db = SessionLocal()
+-    products = db.query(Product).filter(Product.name.ilike(f"%{q}%")).all()
++    # ⭐ VULNERABLE: SQL injection in product search
++    products = db.execute(f"SELECT id, name, price FROM products WHERE name LIKE '%{q}%'").fetchall()
+     result = [
+         {
+-            "id": p.id,
+-            "name": p.name,
+-            "price": p.price,
++            "id": row[0],
++            "name": row[1],
++            "price": row[2],
+         }
+-        for p in products
++        for row in products
+     ]
+     db.close()
+     return {"query": q, "results": result, "count": len(result)}
+-- 
+2.50.1 (Apple Git-155)
+
