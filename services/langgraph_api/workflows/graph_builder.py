@@ -1400,8 +1400,9 @@ def build_graph():
         builder.add_node("human_approval", human_approval_node)
 
         # Pipeline edges:
-        # Client-side agents run first, then server-side log inspector,
-        # then correlator joins everything before challenger/qa_lead/judge.
+        # Build/deploy first for proper testing, then client-side agents,
+        # then server-side log inspector, then correlator joins everything
+        # before challenger/qa_lead/judge.
         # start with repository validation
         builder.add_edge(START, "repo_validator")
         # after validation either planner or end
@@ -1410,13 +1411,13 @@ def build_graph():
             route_after_validator,
             {"planner": "planner", "end": END},
         )
-        builder.add_edge("planner",      "backend")
+        builder.add_edge("planner",      "builder")
+        builder.add_edge("builder",      "deployer")
+        builder.add_edge("deployer",     "backend")
         builder.add_edge("backend",      "frontend")
         builder.add_edge("frontend",     "security")
         builder.add_edge("security",     "sre")
-        builder.add_edge("sre",          "builder")
-        builder.add_edge("builder",      "deployer")
-        builder.add_edge("deployer",     "tester")
+        builder.add_edge("sre",          "tester")
         builder.add_edge("tester",       "api_validator")
         builder.add_edge("api_validator","security_runtime")
         builder.add_edge("security_runtime", "runtime_analyzer")
@@ -1611,7 +1612,15 @@ class SimpleGraph:
             )
             return current  # execute_workflow will detect validator_failed and reject
 
-        # ── Step 2: Static analysis agents ────────────────────────────────────
+        # ── Step 2: Build/deploy first for proper testing ──────────────────────
+        for node_fn in [
+            builder_node,
+            deployer_node,
+        ]:
+            partial = node_fn(current)
+            _merge(current, partial)
+
+        # ── Step 3: Static analysis agents (now with deploy_url available) ───
         for node_fn in [
             planner_node,
             backend_node,
@@ -1622,10 +1631,8 @@ class SimpleGraph:
             partial = node_fn(current)
             _merge(current, partial)
 
-        # ── Step 3: Build/deploy/test pipeline ────────────────────────────────
+        # ── Step 4: Additional testing and analysis ──────────────────────────
         for node_fn in [
-            builder_node,
-            deployer_node,
             tester_node,
             api_validator_node,
             security_runtime_node,

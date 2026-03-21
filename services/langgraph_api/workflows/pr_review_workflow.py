@@ -119,10 +119,16 @@ def _derive_agent_decision_summary(agent: str, findings: list, challenges: list)
             "across client-side findings and server-side log events. "
             + ("; ".join(f.get("title", "")[:60] for f in chains[:2]) if chains else "No cross-layer correlations found.")
         )
-    elif agent in ("qa_lead", "judge"):
-        decision   = "REVIEW_REQUIRED"
+    elif agent == "qa_lead":
+        high_count = sum(1 for f in my_findings if f.get("severity") == "HIGH")
+        med_count  = sum(1 for f in my_findings if f.get("severity") == "MEDIUM")
+        decision   = "FLAG" if (high_count > 0 or med_count > 1) else "PASS"
         test_count = len(findings)
-        summary    = _AGENT_TEST_DESCRIPTIONS[agent]
+        summary    = _AGENT_TEST_DESCRIPTIONS.get("qa_lead", "QA synthesis complete.")
+    elif agent == "judge":
+        decision   = "REVIEW_REQUIRED"   # overridden below with actual result
+        test_count = len(findings)
+        summary    = _AGENT_TEST_DESCRIPTIONS.get("judge", "")
     elif my_findings:
         high_count = sum(1 for f in my_findings if f.get("severity") == "HIGH")
         decision   = "FLAG"
@@ -238,11 +244,11 @@ def _persist_results(
     for agent in agents:
         try:
             ad = _derive_agent_decision_summary(agent, findings, challenges)
-            # Override qa_lead/judge with actual graph output
+            # Override qa_lead with actual graph output
             if agent == "qa_lead" and qa_summary:
                 ad["summary"]    = qa_summary[:500]
                 ad["risk_level"] = risk_level
-                ad["decision"]   = "REVIEW_REQUIRED" if risk_level == "HIGH" else "PASS"
+                ad["decision"]   = "FLAG" if risk_level in ("HIGH", "MEDIUM") else "PASS"
             if agent == "judge":
                 gd = result.get("decision", "REVIEW_REQUIRED")
                 ad["decision"] = gd

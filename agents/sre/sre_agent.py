@@ -149,7 +149,7 @@ def run_sre_agent(workflow_id: str, repository: str, pr_number: int, fid: int = 
     target_url = deploy_url if deploy_url else DEMO_APP_URL
     testing_pr_code = bool(deploy_url)
 
-    if not testing_pr_code and repository != "shopflow":
+    if not testing_pr_code:
         findings.append({
             "id": fid, "workflow_id": workflow_id, "agent": "sre",
             "severity": "LOW",

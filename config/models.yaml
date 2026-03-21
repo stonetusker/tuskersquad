@@ -22,8 +22,12 @@ challenger:
   model: qwen2.5:14b
   type: reasoning
 
+correlator:
+  model: qwen2.5:14b
+  type: reasoning
+
 qa_lead:
-  model: phi3:mini
+  model: qwen2.5:14b
   type: summary
 
 judge:

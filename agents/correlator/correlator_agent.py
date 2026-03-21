@@ -350,8 +350,7 @@ def run_correlator_agent(
 
     # ── Optional LLM enhancement ───────────────────────────────────────────────
     llm_narrative = None
-    if repository != "shopflow":
-        llm_narrative = _llm_rca(root_cause_chains, findings, bus_observations, workflow_id)
+    llm_narrative = _llm_rca(root_cause_chains, findings, bus_observations, workflow_id)
     if llm_narrative:
         new_findings.append({
             "id":          fid,
@@ -366,7 +365,7 @@ def run_correlator_agent(
         fid += 1
 
     # ── No correlations found ──────────────────────────────────────────────────
-    if not new_findings and repository != "shopflow":
+    if not new_findings:
         new_findings.append({
             "id":          fid,
             "workflow_id": workflow_id,

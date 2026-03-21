@@ -141,11 +141,10 @@ def run_qa_lead_agent(
 
     # Try LLM summary; fall back to template
     llm_summary = None
-    if repository != "shopflow":
-        try:
-            llm_summary = _run_async(_llm_summary(findings, workflow_id=str(workflow_id) if workflow_id else None))
-        except RuntimeError:
-            pass
+    try:
+        llm_summary = _run_async(_llm_summary(findings, workflow_id=str(workflow_id) if workflow_id else None))
+    except RuntimeError:
+        pass
 
     summary = llm_summary if llm_summary else _build_template_summary(findings)
 
