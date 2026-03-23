@@ -146,7 +146,7 @@ def _derive_agent_decision_summary(agent: str, findings: list, challenges: list)
         if cov_warnings:
             decision   = "FLAG"
             test_count = len(cov_warnings)
-            summary    = cov_warnings[0].get("description", "")[:400]
+            summary    = cov_warnings[0].get("description", "")
         elif not my_findings:
             summary = f"{_AGENT_TEST_DESCRIPTIONS.get(agent, 'Tests completed.')} - All checks passed."
         else:
@@ -246,13 +246,13 @@ def _persist_results(
             ad = _derive_agent_decision_summary(agent, findings, challenges)
             # Override qa_lead with actual graph output
             if agent == "qa_lead" and qa_summary:
-                ad["summary"]    = qa_summary[:500]
+                ad["summary"]    = qa_summary  # full text — truncation handled in gitea_client
                 ad["risk_level"] = risk_level
                 ad["decision"]   = "FLAG" if risk_level in ("HIGH", "MEDIUM") else "PASS"
             if agent == "judge":
                 gd = result.get("decision", "REVIEW_REQUIRED")
                 ad["decision"] = gd
-                ad["summary"]  = result.get("rationale", "")[:500] or ad["summary"]
+                ad["summary"]  = result.get("rationale", "") or ad["summary"]
             agent_decisions[agent] = ad
             agent_decision_repo.save_summary(
                 workflow_id=workflow_id,
@@ -578,7 +578,7 @@ def _post_validation_failure_comment(workflow_id: str, findings: list, rationale
             "3. The PR number exists and the PR branch can be cloned.",
             "4. The Gitea container is healthy: `docker ps | grep gitea`",
             "",
-            f"> Rationale: {rationale[:400]}",
+            f"> Rationale: {rationale}",
             "",
             "---",
             "*TuskerSquad — Workflow ID: " + str(workflow_id) + "*",
@@ -626,11 +626,11 @@ def _post_final_summary(workflow_id, result, qa_summary, risk_level):
             try:
                 ad = _derive_agent_decision_summary(agent, findings_list, challenges_list)
                 if agent == "qa_lead" and qa_summary:
-                    ad["summary"] = qa_summary[:500]
+                    ad["summary"] = qa_summary  # full text — truncation handled in gitea_client
                     ad["risk_level"] = risk_level
                 if agent == "judge":
                     ad["decision"] = result.get("decision", "REVIEW_REQUIRED")
-                    ad["summary"] = result.get("rationale", "")[:500] or ad["summary"]
+                    ad["summary"] = result.get("rationale", "") or ad["summary"]
                 agent_decisions[agent] = ad
             except Exception:
                 pass
@@ -686,8 +686,23 @@ def _post_agent_pr_comments(workflow_id: str, agent_decisions: dict) -> None:
                 "",
             ]
             if summary:
-                lines.append(f"> {summary[:500]}")
-                lines.append("")
+                # Use <details> for long summaries so Gitea shows a fold
+                # rather than abruptly cutting the text mid-sentence.
+                if len(summary) > 300:
+                    first_line = summary.split("\n")[0].strip()[:120]
+                    preview = first_line if first_line else "View summary"
+                    lines += [
+                        "<details>",
+                        f"<summary>{preview} — <em>click to expand</em></summary>",
+                        "",
+                        summary,
+                        "",
+                        "</details>",
+                        "",
+                    ]
+                else:
+                    lines.append(f"> {summary}")
+                    lines.append("")
 
             if my_f:
                 lines.append(f"**Tests run:** {tests} · **Findings:** {len(my_f)}")

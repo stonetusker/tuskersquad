@@ -113,8 +113,21 @@ def _agent_section(
         f"#### {label}  {di}  Risk: {ri if ri else risk}",
     ]
     if summary:
-        lines.append(f"> {summary[:400]}")
-        lines.append("")
+        # Use <details> for long summaries (>300 chars) so Gitea folds them
+        # gracefully rather than showing a hard cut mid-sentence.
+        if len(summary) > 300:
+            lines += [
+                "<details>",
+                "<summary>View summary</summary>",
+                "",
+                summary,
+                "",
+                "</details>",
+                "",
+            ]
+        else:
+            lines.append(f"> {summary}")
+            lines.append("")
 
     if my_findings:
         lines.append(f"**Tests run:** {tests} · **Findings:** {len(my_findings)}")
@@ -159,19 +172,30 @@ def build_initial_review_comment(
         "",
     ]
 
-    # QA Lead summary — shown first so it's never trimmed by Gitea's PR comment preview
+    # QA Lead summary — shown first, wrapped in <details> so the full text
+    # is preserved without any mid-sentence cuts. The summary tag shows a
+    # one-line preview; clicking expands the complete QA standup report.
     if qa_summary:
+        # Extract first sentence/line as the collapsed preview
+        first_line = qa_summary.split("\n")[0].strip()[:120]
+        preview = first_line if first_line else "View QA standup summary"
         lines += [
             "### QA Lead Summary",
             "",
-            qa_summary[:800],
+            "<details>",
+            f"<summary>{preview} — <em>click to expand full summary</em></summary>",
+            "",
+            qa_summary,
+            "",
+            "</details>",
             "",
         ]
 
-    # Root cause analysis brief from correlator
+    # Root cause analysis brief from correlator — no truncation,
+    # full text preserved so root cause chains are never cut mid-sentence.
     if developer_brief:
         lines += [
-            developer_brief[:2000],
+            developer_brief,
             "",
         ]
 
@@ -181,7 +205,7 @@ def build_initial_review_comment(
             "<details>",
             "<summary><strong>Judge Rationale</strong> (click to expand)</summary>",
             "",
-            rationale[:800],
+            rationale,
             "",
             "</details>",
             "",
