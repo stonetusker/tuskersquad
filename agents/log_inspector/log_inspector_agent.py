@@ -105,6 +105,7 @@ def run_log_inspector_agent(
     repository: str,
     pr_number: int,
     fid: int = 1,
+    deploy_url: str = "",
 ) -> Dict[str, Any]:
     """
     Main entry point — mirrors the signature of all other agent runners.
@@ -114,19 +115,33 @@ def run_log_inspector_agent(
 
     bus_observations: list of dicts posted to the CorrelationBus for
                       other agents to read.
+
+    deploy_url: when set, the ephemeral PR container is also polled for
+                /logs/events. ShopFlow exposes this endpoint in the same
+                format as the microservices, so structured events logged
+                by checkout.py and dependencies.py during testing are
+                collected as server-side evidence for the Correlator.
     """
     start = datetime.utcnow()
     findings: List[Dict[str, Any]] = []
     bus_observations: List[Dict[str, Any]] = []
     now = datetime.utcnow().isoformat()
 
-    logger.info("log_inspector_started workflow=%s", workflow_id)
+    logger.info("log_inspector_started workflow=%s deploy_url=%s", workflow_id, bool(deploy_url))
 
     # ── Step 1: Fetch logs from all services ───────────────────────────────────
+    # Always poll the permanent microservices.
+    # When an ephemeral PR container is running, also poll it — ShopFlow exposes
+    # /logs/events so checkout errors and auth bypass events are collected here.
     all_events: List[Dict] = []
     service_health: Dict[str, Dict] = {}
 
-    for svc_name, svc_url in _SERVICES.items():
+    services_to_poll = dict(_SERVICES)
+    if deploy_url:
+        services_to_poll["shopflow-backend"] = deploy_url.rstrip("/")
+        logger.info("log_inspector_also_polling_ephemeral deploy_url=%s", deploy_url)
+
+    for svc_name, svc_url in services_to_poll.items():
         events = _fetch_events(svc_name, svc_url)
         health = _fetch_health(svc_name, svc_url)
         all_events.extend(events)

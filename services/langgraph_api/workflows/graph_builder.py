@@ -953,6 +953,7 @@ def log_inspector_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 repository=state.get("repository", ""),
                 pr_number=state.get("pr_number", 0),
                 fid=fid,
+                deploy_url=state.get("deploy_url", ""),
             )
             findings         = result.get("findings", [])
             bus_observations = result.get("bus_observations", [])

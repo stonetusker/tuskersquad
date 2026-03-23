@@ -59,6 +59,47 @@ _SECURITY_TOOL = os.getenv("SECURITY_PROBE_TOOL","httpx")
 _SRE_TOOL      = os.getenv("SRE_LOAD_TOOL",      "httpx")
 
 
+def _load_models() -> dict:
+    """
+    Read config/models.yaml and return a dict of agent -> model name.
+    Only 3 agents use LLMs: judge, correlator, qa_lead.
+    Falls back to sensible defaults if the file is missing or unreadable.
+    The file is searched relative to the repo root (two levels up from this
+    service directory), then relative to /app (inside Docker container).
+    """
+    defaults = {
+        "judge":      "qwen2.5:14b",
+        "correlator": "qwen2.5:14b",
+        "qa_lead":    "phi3:mini",
+    }
+    candidates = [
+        # Running inside Docker container
+        "/app/config/models.yaml",
+        # Running from repo root locally
+        os.path.join(os.path.dirname(__file__), "..", "..", "config", "models.yaml"),
+    ]
+    for path in candidates:
+        try:
+            import yaml
+            with open(os.path.normpath(path)) as f:
+                data = yaml.safe_load(f) or {}
+            # Only extract agents we know use LLMs
+            result = {}
+            for agent in ("judge", "correlator", "qa_lead"):
+                if agent in data and "model" in data[agent]:
+                    result[agent] = data[agent]["model"]
+                else:
+                    result[agent] = defaults[agent]
+            return result
+        except Exception:
+            continue
+    return defaults
+
+
+# Resolved LLM model names — read once at import time
+_MODELS = _load_models()
+
+
 @app.on_event("startup")
 async def _startup_log():
     logger.info("TuskerSquad Integration Service v2 starting")
@@ -118,10 +159,10 @@ def _review_started_body(provider: str, repository: str,
         "| Security Runtime | Live attack probes against running container | httpx |\n"
         "| Runtime Analyser | CPU / memory profiling, log analysis | docker stats |\n"
         "| Log Inspector | Read structured logs from each microservice | /logs/events |\n"
-        "| Correlator | Join client findings + server logs into root causes | rule-based + LLM |\n"
+        f"| Correlator | Join client findings + server logs into root causes | {_MODELS['correlator']} |\n"
         "| Challenger | Dispute findings affected by environment variance | rule-based |\n"
-        "| QA Lead | Synthesise overall risk level | phi3:mini |\n"
-        "| Judge | Final APPROVE / REJECT / REVIEW_REQUIRED decision | qwen2.5:14b |\n"
+        f"| QA Lead | Synthesise overall risk level | {_MODELS['qa_lead']} |\n"
+        f"| Judge | Final APPROVE / REJECT / REVIEW_REQUIRED decision | {_MODELS['judge']} |\n"
         "| Cleanup | Stop container, remove image, wipe workspace | docker rm |\n\n"
         "*TuskerSquad*"
     )

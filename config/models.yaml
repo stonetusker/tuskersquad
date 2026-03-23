@@ -1,35 +1,27 @@
-planner:
-  model: qwen2.5:14b
-  type: reasoning
-
-backend_engineer:
-  model: deepseek-coder:6.7b
-  type: coding
-
-frontend_engineer:
-  model: deepseek-coder:6.7b
-  type: coding
-
-security_engineer:
-  model: qwen2.5:14b
-  type: reasoning
-
-sre_engineer:
-  model: qwen2.5:14b
-  type: reasoning
-
-challenger:
-  model: qwen2.5:14b
-  type: reasoning
-
-correlator:
-  model: qwen2.5:14b
-  type: reasoning
-
-qa_lead:
-  model: qwen2.5:14b
-  type: summary
+# TuskerSquad LLM Model Routing
+# ==============================
+# Only 3 agents make LLM calls. All 15 other agents are fully deterministic
+# (real HTTP probes, pytest, rule-based logic — no LLM needed).
+#
+# Change any model here and it takes effect after: make restart
+# The integration service reads this file at startup to show model names
+# in the PR comment table when a review begins.
+#
+# To pull models:
+#   ollama pull qwen2.5:14b
+#   ollama pull phi3:mini
 
 judge:
   model: qwen2.5:14b
   type: reasoning
+  description: "Final APPROVE / REJECT / REVIEW_REQUIRED decision with reasoning"
+
+correlator:
+  model: qwen2.5:14b
+  type: reasoning
+  description: "3-sentence developer briefing from cross-layer root cause chains"
+
+qa_lead:
+  model: phi3:mini
+  type: summary
+  description: "Concise risk-level summary synthesised from all agent findings"
