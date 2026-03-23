@@ -1,0 +1,107 @@
+From 8ec41f8c166e81fdc048adfdee17c91ec4a3bcbf Mon Sep 17 00:00:00 2001
+From: Subeesh Sivanandan <contact@stonetusker.com>
+Date: Mon, 23 Mar 2026 13:34:55 +0530
+Subject: [PATCH] =?UTF-8?q?introduce=20bug=20for=20demo=20-=20add=20premiu?=
+ =?UTF-8?q?m=20customer=20discount=20(WIP=20=E2=80=94=20debug=20flags=20ac?=
+ =?UTF-8?q?tive)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ apps/backend/bug_flags.py       | 17 +++++++++++------
+ apps/backend/dependencies.py    | 12 ++++++++++++
+ apps/backend/routes/checkout.py | 17 +++++++++++++++++
+ 3 files changed, 40 insertions(+), 6 deletions(-)
+
+diff --git a/apps/backend/bug_flags.py b/apps/backend/bug_flags.py
+index 59a0cab..5a78b2a 100644
+--- a/apps/backend/bug_flags.py
++++ b/apps/backend/bug_flags.py
+@@ -1,8 +1,13 @@
+-import os
+-
++"""
++ShopFlow feature flags.
+ 
+-BUG_PRICE=os.getenv("BUG_PRICE","false").lower()=="true"
+-
+-BUG_SECURITY=os.getenv("BUG_SECURITY","false").lower()=="true"
++BUG_PRICE and BUG_SECURITY are hardcoded True in this commit while the
++premium discount feature is under development.
++MUST be reverted to env-var reads before merging to main.
++"""
++import os
+ 
+-BUG_SLOW=os.getenv("BUG_SLOW","false").lower()=="true"
++# ⚠️  Debug flags active — REMOVE before merge to main
++BUG_PRICE    = True   # checkout total multiplied by 1.35  ← remove
++BUG_SECURITY = True   # invalid JWT tokens accepted         ← remove
++BUG_SLOW     = os.getenv("BUG_SLOW", "false").lower() == "true"
+diff --git a/apps/backend/dependencies.py b/apps/backend/dependencies.py
+index 24a4161..bf4497c 100644
+--- a/apps/backend/dependencies.py
++++ b/apps/backend/dependencies.py
+@@ -1,3 +1,4 @@
++from apps.backend.main import log_event
+ from fastapi import Depends, HTTPException
+ from fastapi.security import OAuth2PasswordBearer
+ from jose import jwt, JWTError
+@@ -16,5 +17,16 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
+         return user_id
+     except JWTError:
+         if BUG_SECURITY:
++            # Server-side evidence — Log Inspector reads /logs/events on ephemeral container.
++            # "token_validation_failed" is in correlator auth_jwt rule server_events list
++            # → Correlator joins this with Security Engineer auth_bypass_detected finding.
++            log_event(
++                level="WARN",
++                event="token_validation_failed",
++                detail=(
++                    "JWT validation failed but request was allowed through — "
++                    "BUG_SECURITY=True bypasses authentication on protected endpoints"
++                ),
++            )
+             return "anonymous"          # ⭐ intentional auth-bypass bug
+         raise HTTPException(status_code=401, detail="Unauthorized")
+diff --git a/apps/backend/routes/checkout.py b/apps/backend/routes/checkout.py
+index 25e44ba..830eb0d 100644
+--- a/apps/backend/routes/checkout.py
++++ b/apps/backend/routes/checkout.py
+@@ -1,4 +1,5 @@
+ import time
++from apps.backend.main import log_event
+ 
+ from fastapi import APIRouter, Depends
+ 
+@@ -53,11 +54,27 @@ def checkout(
+             total += product.price * item.quantity
+ 
+     # ⭐ intentional pricing defect
++    correct_total = total
+ 
+     if BUG_PRICE:
+ 
+         total = total * 1.35
+ 
++        # Server-side evidence — Log Inspector reads /logs/events on ephemeral container.
++        # "price_inflated_by_bug" is in correlator price_bug rule server_events list
++        # and in log_inspector _ALWAYS_HIGH → flagged HIGH, posted to CorrelationBus.
++        log_event(
++            level="ERROR",
++            event="price_inflated_by_bug",
++            detail=(
++                f"correct_total={correct_total:.2f} "
++                f"inflated_total={total:.2f} "
++                f"multiplier=1.35 "
++                f"items={len(request.items)} "
++                f"user={user}"
++            ),
++        )
++
+     order = Order(
+ 
+         user_id=1,
+-- 
+2.50.1 (Apple Git-155)
+
