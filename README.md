@@ -146,8 +146,10 @@ cd tuskersquad
 cp infra/.env.example infra/.env
 
 make up
-make setup
+docker logs tuskersquad-gitea-setup | grep GITEA_TOKEN
+# copy token to infra/.env
 make restart
+
 
 open http://localhost:5173
 ```
